@@ -1,0 +1,10 @@
+id: RMIC26
+name: 26rmic
+name[zh]:
+version: 1.0.0
+#icon: assets/hello.png
+author: Jelly_Candy
+desc: 为黑龙江大学2RM校内赛写的一个基于opencvmaixCDK运maixcam2上的一个简易自瞄
+desc[zh]:
+files:
+  # assets: assets

@@ -1,0 +1,89 @@
+%YAML:1.0
+---
+image_width: 1920
+image_height: 1080
+board_inner_corners_cols: 9
+board_inner_corners_rows: 6
+square_size_mm: 25.
+camera_matrix: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [ 1117.3597613638731, 0., 907.62080916092282, 0.,
+       1114.0969669538572, 536.01831161753523, 0., 0., 1. ]
+distortion_coefficients: !!opencv-matrix
+   rows: 5
+   cols: 1
+   dt: d
+   data: [ -0.030862430670700096, 0.14613785835648682,
+       -0.0026769941548442418, -0.0007528631134228437,
+       -0.25135623580531086 ]
+opencv_rms: 0.61147192156856356
+global_reprojection_error_px: 0.61147294064832947
+per_view_errors_px:
+   -
+      filename: "0.jpg"
+      error_px: 0.47685947247774119
+   -
+      filename: "1.jpg"
+      error_px: 1.1598192562594931
+   -
+      filename: "10.jpg"
+      error_px: 0.56063310352786733
+   -
+      filename: "11.jpg"
+      error_px: 0.60536593421053342
+   -
+      filename: "12.jpg"
+      error_px: 0.45565265363282365
+   -
+      filename: "13.jpg"
+      error_px: 0.41134821628642404
+   -
+      filename: "14.jpg"
+      error_px: 0.36015371849990535
+   -
+      filename: "15.jpg"
+      error_px: 0.37694731195243159
+   -
+      filename: "16.jpg"
+      error_px: 0.32835921372718019
+   -
+      filename: "17.jpg"
+      error_px: 0.48360896273198989
+   -
+      filename: "18.jpg"
+      error_px: 0.62030775150570527
+   -
+      filename: "19.jpg"
+      error_px: 0.6525919602358613
+   -
+      filename: "2.jpg"
+      error_px: 1.1887255224774091
+   -
+      filename: "20.jpg"
+      error_px: 0.69077185703515598
+   -
+      filename: "21.jpg"
+      error_px: 0.49009852325106534
+   -
+      filename: "3.jpg"
+      error_px: 0.34096249996548733
+   -
+      filename: "4.jpg"
+      error_px: 0.54336567095849209
+   -
+      filename: "5.jpg"
+      error_px: 0.68873339227174146
+   -
+      filename: "6.jpg"
+      error_px: 0.52037497948691058
+   -
+      filename: "7.jpg"
+      error_px: 0.64152006792655181
+   -
+      filename: "8.jpg"
+      error_px: 0.44094976879958747
+   -
+      filename: "9.jpg"
+      error_px: 0.52762248426491143
