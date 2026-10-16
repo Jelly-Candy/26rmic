@@ -3,11 +3,11 @@
 #include "maix_display.hpp"
 #include "maix_touchscreen.hpp"
 
-#include "AimController.hpp"
 #include "ArmorTracker.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
 #include "AimResult.hpp"
+#include "AimUart.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -104,6 +104,9 @@ static cv::Point2f flippedToOriginal(
 
 int _main(int argc, char *argv[]) {
   camera::Camera cam(640, 480, image::Format::FMT_RGB888);
+
+  // 用于 UART 通信的序列号
+  uint8_t txSeq = 0;
 
   display::Display disp;
 
@@ -258,6 +261,10 @@ if (tracked.state == TrackState::TRACKING)
                 cv::Scalar(255, 255, 0),
                 2);
 }
+
+uint8_t txFrame[AimUart::FRAME_SIZE];
+AimUart::encode(aimResult, txSeq++, txFrame);
+
     // 读取触摸屏
     int touchX = 0;
     int touchY = 0;
