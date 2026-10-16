@@ -3,11 +3,11 @@
 #include "maix_display.hpp"
 #include "maix_touchscreen.hpp"
 
+#include "AimResult.hpp"
+#include "AimUart.hpp"
 #include "ArmorTracker.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
-#include "AimResult.hpp"
-#include "AimUart.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -91,15 +91,26 @@ static void draw_color_menu(cv::Mat &rgb, EnemyColor selected) {
 }
 
 // 将旋转 180°后的图像坐标还原到原始标定图像坐标
-static cv::Point2f flippedToOriginal(
-    const cv::Point2f& point,
-    int width,
-    int height)
-{
-    return cv::Point2f(
-        static_cast<float>(width - 1) - point.x,
-        static_cast<float>(height - 1) - point.y
-    );
+static cv::Point2f flippedToOriginal(const cv::Point2f &point, int width,
+                                     int height) {
+  return cv::Point2f(static_cast<float>(width - 1) - point.x,
+                     static_cast<float>(height - 1) - point.y);
+}
+
+// 测试 AimUart 编码功能
+void testAimUart() {
+  AimResult result{};
+  result.targetFound = true;
+  result.yawDeg = 1.234f;
+  result.pitchDeg = -2.500f;
+
+  uint8_t frame[AimUart::FRAME_SIZE];
+  AimUart::encode(result, 0, frame);
+
+  for (std::size_t i = 0; i < AimUart::FRAME_SIZE; ++i) {
+    std::printf("%02X ", frame[i]);
+  }
+  std::printf("\n");
 }
 
 int _main(int argc, char *argv[]) {
@@ -132,6 +143,8 @@ int _main(int argc, char *argv[]) {
     log::error("camera image size configuration failed");
     return -1;
   }
+
+  testAimUart();
 
   log::info("=== ARMOR APP NEW VERSION ===");
 
@@ -215,55 +228,37 @@ int _main(int argc, char *argv[]) {
     const TrackedTarget &tracked = tracker.update(targets);
 
     // 统一保存本帧的瞄准结果
-AimResult aimResult;
+    AimResult aimResult;
 
-//绿十字
-cv::drawMarker(
-    rgb,
-    cv::Point(width - 1 - 294, height - 1 - 244),
-    cv::Scalar(0, 255, 0),
-    cv::MARKER_CROSS,
-    30,
-    3
-);
+    // 绿十字
+    cv::drawMarker(rgb, cv::Point(width - 1 - 294, height - 1 - 244),
+                   cv::Scalar(0, 255, 0), cv::MARKER_CROSS, 30, 3);
 
-if (tracked.state == TrackState::TRACKING)
-{
-    // 将翻转后图像中的目标坐标还原到原始标定图像坐标
-    const cv::Point2f originalCenter =
-        flippedToOriginal(tracked.center, width, height);
+    if (tracked.state == TrackState::TRACKING) {
+      // 将翻转后图像中的目标坐标还原到原始标定图像坐标
+      const cv::Point2f originalCenter =
+          flippedToOriginal(tracked.center, width, height);
 
-    // 使用原始图像坐标计算角度，只计算一次
-    const cv::Point2f angle =
-        cameraModel.pixelToAngle(originalCenter);
+      // 使用原始图像坐标计算角度，只计算一次
+      const cv::Point2f angle = cameraModel.pixelToAngle(originalCenter);
 
-    // 填充瞄准结果
-    aimResult.targetFound = true;
-    aimResult.yawDeg = angle.x;
-    aimResult.pitchDeg = angle.y;
-    aimResult.centerX = originalCenter.x;
-    aimResult.centerY = originalCenter.y;
+      // 填充瞄准结果
+      aimResult.targetFound = true;
+      aimResult.yawDeg = angle.x;
+      aimResult.pitchDeg = angle.y;
+      aimResult.centerX = originalCenter.x;
+      aimResult.centerY = originalCenter.y;
 
-    // 在画面上显示与瞄准结果一致的角度
-    cv::putText(rgb,
-                "Yaw:" + std::to_string(angle.x),
-                cv::Point(15, 190),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.7,
-                cv::Scalar(255, 255, 0),
-                2);
+      // 在画面上显示与瞄准结果一致的角度
+      cv::putText(rgb, "Yaw:" + std::to_string(angle.x), cv::Point(15, 190),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
 
-    cv::putText(rgb,
-                "Pitch:" + std::to_string(angle.y),
-                cv::Point(15, 220),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.7,
-                cv::Scalar(255, 255, 0),
-                2);
-}
+      cv::putText(rgb, "Pitch:" + std::to_string(angle.y), cv::Point(15, 220),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+    }
 
-uint8_t txFrame[AimUart::FRAME_SIZE];
-AimUart::encode(aimResult, txSeq++, txFrame);
+    uint8_t txFrame[AimUart::FRAME_SIZE];
+    AimUart::encode(aimResult, txSeq++, txFrame);
 
     // 读取触摸屏
     int touchX = 0;
