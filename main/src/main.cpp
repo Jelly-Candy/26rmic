@@ -7,6 +7,7 @@
 #include "ArmorTracker.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
+#include "AimResult.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -157,17 +158,6 @@ int _main(int argc, char *argv[]) {
     }
 
     draw_color_menu(rgb, selectedColor);
-
-    // 画面几何中心：红色十字
-    cv::drawMarker(rgb, cv::Point(img->width() / 2, img->height() / 2),
-                   cv::Scalar(255, 0, 0), cv::MARKER_CROSS, 30, 3);
-
-    // 当前内参主点：绿色十字
-    cv::drawMarker(rgb, cv::Point(303, 238), cv::Scalar(0, 255, 0),
-                   cv::MARKER_CROSS, 30, 3);
-
-    // 左上角：蓝色实心方块
-    cv::rectangle(rgb, cv::Rect(10, 10, 40, 40), cv::Scalar(0, 0, 255), -1);
     disp.show(*img);
 
     delete img;
@@ -203,11 +193,45 @@ int _main(int argc, char *argv[]) {
     const int height = img->height();
 
     cv::Mat rgb(height, width, CV_8UC3, img->data());
+    // 画面几何中心：红色十字
+cv::drawMarker(
+    rgb,
+    cv::Point(width / 2, height / 2),
+    cv::Scalar(255, 0, 0),
+    cv::MARKER_CROSS,
+    30,
+    3
+);
+
+// 当前使用的内参主点：绿色十字
+cv::drawMarker(
+    rgb,
+    cv::Point(303, 238),
+    cv::Scalar(0, 255, 0),
+    cv::MARKER_CROSS,
+    30,
+    3
+);
 
     // 获取当前帧的检测结果和中间调试数据
     ArmorDebugInfo debugInfo;
     std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
     const TrackedTarget &tracked = tracker.update(targets);
+
+    // 统一保存本帧的瞄准结果
+AimResult aimResult;
+
+if (tracked.state == TrackState::TRACKING)
+{
+    const cv::Point2f angle =
+        cameraModel.pixelToAngle(tracked.center);
+
+    aimResult.targetFound = true;
+    aimResult.yawDeg = angle.x;
+    aimResult.pitchDeg = angle.y;
+    aimResult.centerX = tracked.center.x;
+    aimResult.centerY = tracked.center.y;
+}
 
     if (tracked.state == TrackState::TRACKING) {
 
