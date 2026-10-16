@@ -1,7 +1,7 @@
 %YAML:1.0
 ---
-image_width: 1920
-image_height: 1080
+image_width: 640
+image_height: 480
 board_inner_corners_cols: 9
 board_inner_corners_rows: 6
 square_size_mm: 25.
@@ -9,81 +9,72 @@ camera_matrix: !!opencv-matrix
    rows: 3
    cols: 3
    dt: d
-   data: [ 1117.3597613638731, 0., 907.62080916092282, 0.,
-       1114.0969669538572, 536.01831161753523, 0., 0., 1. ]
+   data: [ 486.33826291452965, 0., 294.36075045074716, 0.,
+       476.99920933194102, 243.51796605924997, 0., 0., 1. ]
 distortion_coefficients: !!opencv-matrix
    rows: 5
    cols: 1
    dt: d
-   data: [ -0.030862430670700096, 0.14613785835648682,
-       -0.0026769941548442418, -0.0007528631134228437,
-       -0.25135623580531086 ]
-opencv_rms: 0.61147192156856356
-global_reprojection_error_px: 0.61147294064832947
+   data: [ -0.17944669173084032, 1.1647964260854939,
+       0.0026441001508764744, -0.0012258039253384121,
+       -2.4671370914598274 ]
+opencv_rms: 2.0872619454521009
+global_reprojection_error_px: 2.0872620665027033
 per_view_errors_px:
    -
-      filename: "0.jpg"
-      error_px: 0.47685947247774119
-   -
-      filename: "1.jpg"
-      error_px: 1.1598192562594931
-   -
-      filename: "10.jpg"
-      error_px: 0.56063310352786733
-   -
-      filename: "11.jpg"
-      error_px: 0.60536593421053342
-   -
-      filename: "12.jpg"
-      error_px: 0.45565265363282365
-   -
-      filename: "13.jpg"
-      error_px: 0.41134821628642404
-   -
-      filename: "14.jpg"
-      error_px: 0.36015371849990535
-   -
-      filename: "15.jpg"
-      error_px: 0.37694731195243159
-   -
-      filename: "16.jpg"
-      error_px: 0.32835921372718019
-   -
-      filename: "17.jpg"
-      error_px: 0.48360896273198989
-   -
       filename: "18.jpg"
-      error_px: 0.62030775150570527
+      error_px: 0.25745334409243542
    -
       filename: "19.jpg"
-      error_px: 0.6525919602358613
-   -
-      filename: "2.jpg"
-      error_px: 1.1887255224774091
+      error_px: 0.41603780869558077
    -
       filename: "20.jpg"
-      error_px: 0.69077185703515598
+      error_px: 0.21207157899508863
    -
       filename: "21.jpg"
-      error_px: 0.49009852325106534
+      error_px: 0.36309452714365736
    -
-      filename: "3.jpg"
-      error_px: 0.34096249996548733
+      filename: "22.jpg"
+      error_px: 3.8143280819798102
    -
-      filename: "4.jpg"
-      error_px: 0.54336567095849209
+      filename: "23.jpg"
+      error_px: 4.6146199531485914
    -
-      filename: "5.jpg"
-      error_px: 0.68873339227174146
+      filename: "24.jpg"
+      error_px: 0.4086663246138782
    -
-      filename: "6.jpg"
-      error_px: 0.52037497948691058
+      filename: "25.jpg"
+      error_px: 3.0843473484261543
    -
-      filename: "7.jpg"
-      error_px: 0.64152006792655181
+      filename: "26.jpg"
+      error_px: 0.57807028332998067
    -
-      filename: "8.jpg"
-      error_px: 0.44094976879958747
+      filename: "27.jpg"
+      error_px: 0.22699027620661874
    -
-      filename: "9.jpg"
-      error_px: 0.52762248426491143
+      filename: "28.jpg"
+      error_px: 0.18488112578032806
+   -
+      filename: "29.jpg"
+      error_px: 0.41532411034747807
+   -
+      filename: "30.jpg"
+      error_px: 0.50097042148415649
+   -
+      filename: "31.jpg"
+      error_px: 5.6651055808610771
+   -
+      filename: "33.jpg"
+      error_px: 1.8594905185935795
+   -
+      filename: "35.jpg"
+      error_px: 0.2676189318222259
+   -
+      filename: "36.jpg"
+      error_px: 0.42824478058329057
+   -
+      filename: "37.jpg"
+      error_px: 0.20245402831906928
+   -
+      filename: "38.jpg"
+      error_px: 0.3820047389744568

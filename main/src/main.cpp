@@ -135,7 +135,8 @@ int _main(int argc, char *argv[]) {
     }
 
     cv::Mat rgb(img->height(), img->width(), CV_8UC3, img->data());
-
+// 整机旋转 180°安装：翻转图像，使画面恢复正常方向
+cv::flip(rgb, rgb, -1);
     int touchX = 0;
     int touchY = 0;
     bool pressed = false;
@@ -193,7 +194,19 @@ int _main(int argc, char *argv[]) {
     const int height = img->height();
 
     cv::Mat rgb(height, width, CV_8UC3, img->data());
-    // 画面几何中心：红色十字
+    // 必须在检测之前执行，并且每帧只执行一次
+cv::flip(rgb, rgb, -1);
+    
+
+    // 获取当前帧的检测结果和中间调试数据
+    ArmorDebugInfo debugInfo;
+    std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
+    const TrackedTarget &tracked = tracker.update(targets);
+
+    // 统一保存本帧的瞄准结果
+AimResult aimResult;
+
+// 画面几何中心：红色十字
 cv::drawMarker(
     rgb,
     cv::Point(width / 2, height / 2),
@@ -212,14 +225,6 @@ cv::drawMarker(
     30,
     3
 );
-
-    // 获取当前帧的检测结果和中间调试数据
-    ArmorDebugInfo debugInfo;
-    std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
-    const TrackedTarget &tracked = tracker.update(targets);
-
-    // 统一保存本帧的瞄准结果
-AimResult aimResult;
 
 if (tracked.state == TrackState::TRACKING)
 {
