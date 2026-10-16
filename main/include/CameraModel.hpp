@@ -18,13 +18,16 @@ public:
         const cv::Point2f& pixel
     ) const;
 
+bool setImageSize(int width, int height);
 
 private:
+    float baseFx_, baseFy_, baseCx_, baseCy_;
+    float fx_, fy_, cx_, cy_;
 
-    float fx_;
-    float fy_;
-    float cx_;
-    float cy_;
+    int calibrationWidth_;
+    int calibrationHeight_;
+    int imageWidth_;
+    int imageHeight_;
 
     bool loaded_;
 };

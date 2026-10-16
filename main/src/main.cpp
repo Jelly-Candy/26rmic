@@ -3,10 +3,10 @@
 #include "maix_display.hpp"
 #include "maix_touchscreen.hpp"
 
+#include "AimController.hpp"
 #include "ArmorTracker.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
-#include "AimController.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -107,15 +107,15 @@ int _main(int argc, char *argv[]) {
   ArmorTracker tracker(80.0f, 5);
   CameraModel cameraModel;
 
-if(!cameraModel.load(
-    "/root/camera_intrinsics.yml"))
-{
+  if (!cameraModel.load("/root/camera_intrinsics.yml")) {
     log::error("camera calibration load failed");
     return -1;
-}
+  }
 
-
-
+  if (!cameraModel.setImageSize(640, 480)) {
+    log::error("camera image size configuration failed");
+    return -1;
+  }
 
   log::info("=== ARMOR APP NEW VERSION ===");
 
@@ -157,6 +157,17 @@ if(!cameraModel.load(
     }
 
     draw_color_menu(rgb, selectedColor);
+
+    // 画面几何中心：红色十字
+    cv::drawMarker(rgb, cv::Point(img->width() / 2, img->height() / 2),
+                   cv::Scalar(255, 0, 0), cv::MARKER_CROSS, 30, 3);
+
+    // 当前内参主点：绿色十字
+    cv::drawMarker(rgb, cv::Point(303, 238), cv::Scalar(0, 255, 0),
+                   cv::MARKER_CROSS, 30, 3);
+
+    // 左上角：蓝色实心方块
+    cv::rectangle(rgb, cv::Rect(10, 10, 40, 40), cv::Scalar(0, 0, 255), -1);
     disp.show(*img);
 
     delete img;
@@ -166,7 +177,6 @@ if(!cameraModel.load(
   if (app::need_exit()) {
     return 0;
   }
-
   // 将选择结果应用到检测器
   detector.setEnemyColor(selectedColor);
 
@@ -198,39 +208,17 @@ if(!cameraModel.load(
     ArmorDebugInfo debugInfo;
     std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
     const TrackedTarget &tracked = tracker.update(targets);
-    
 
-    if(tracked.state == TrackState::TRACKING)
-{
+    if (tracked.state == TrackState::TRACKING) {
 
-    cv::Point2f angle =
-        cameraModel.pixelToAngle(
-            tracked.center
-        );
+      cv::Point2f angle = cameraModel.pixelToAngle(tracked.center);
 
+      cv::putText(rgb, "Yaw:" + std::to_string(angle.x), cv::Point(15, 190),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
 
-    cv::putText(
-        rgb,
-        "Yaw:" + std::to_string(angle.x),
-        cv::Point(15,190),
-        cv::FONT_HERSHEY_SIMPLEX,
-        0.7,
-        cv::Scalar(255,255,0),
-        2
-    );
-
-
-    cv::putText(
-        rgb,
-        "Pitch:" + std::to_string(angle.y),
-        cv::Point(15,220),
-        cv::FONT_HERSHEY_SIMPLEX,
-        0.7,
-        cv::Scalar(255,255,0),
-        2
-    );
-    
-}
+      cv::putText(rgb, "Pitch:" + std::to_string(angle.y), cv::Point(15, 220),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+    }
 
     // 读取触摸屏
     int touchX = 0;
