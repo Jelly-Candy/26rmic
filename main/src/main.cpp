@@ -90,6 +90,18 @@ static void draw_color_menu(cv::Mat &rgb, EnemyColor selected) {
               1.0, cv::Scalar(255, 255, 255), 2);
 }
 
+// 将旋转 180°后的图像坐标还原到原始标定图像坐标
+static cv::Point2f flippedToOriginal(
+    const cv::Point2f& point,
+    int width,
+    int height)
+{
+    return cv::Point2f(
+        static_cast<float>(width - 1) - point.x,
+        static_cast<float>(height - 1) - point.y
+    );
+}
+
 int _main(int argc, char *argv[]) {
   camera::Camera cam(640, 480, image::Format::FMT_RGB888);
 
@@ -135,8 +147,7 @@ int _main(int argc, char *argv[]) {
     }
 
     cv::Mat rgb(img->height(), img->width(), CV_8UC3, img->data());
-// 整机旋转 180°安装：翻转图像，使画面恢复正常方向
-cv::flip(rgb, rgb, -1);
+
     int touchX = 0;
     int touchY = 0;
     bool pressed = false;
@@ -194,9 +205,6 @@ cv::flip(rgb, rgb, -1);
     const int height = img->height();
 
     cv::Mat rgb(height, width, CV_8UC3, img->data());
-    // 必须在检测之前执行，并且每帧只执行一次
-cv::flip(rgb, rgb, -1);
-    
 
     // 获取当前帧的检测结果和中间调试数据
     ArmorDebugInfo debugInfo;
@@ -206,20 +214,10 @@ cv::flip(rgb, rgb, -1);
     // 统一保存本帧的瞄准结果
 AimResult aimResult;
 
-// 画面几何中心：红色十字
+//绿十字
 cv::drawMarker(
     rgb,
-    cv::Point(width / 2, height / 2),
-    cv::Scalar(255, 0, 0),
-    cv::MARKER_CROSS,
-    30,
-    3
-);
-
-// 当前使用的内参主点：绿色十字
-cv::drawMarker(
-    rgb,
-    cv::Point(303, 238),
+    cv::Point(width - 1 - 294, height - 1 - 244),
     cv::Scalar(0, 255, 0),
     cv::MARKER_CROSS,
     30,
@@ -228,27 +226,38 @@ cv::drawMarker(
 
 if (tracked.state == TrackState::TRACKING)
 {
-    const cv::Point2f angle =
-        cameraModel.pixelToAngle(tracked.center);
+    // 将翻转后图像中的目标坐标还原到原始标定图像坐标
+    const cv::Point2f originalCenter =
+        flippedToOriginal(tracked.center, width, height);
 
+    // 使用原始图像坐标计算角度，只计算一次
+    const cv::Point2f angle =
+        cameraModel.pixelToAngle(originalCenter);
+
+    // 填充瞄准结果
     aimResult.targetFound = true;
     aimResult.yawDeg = angle.x;
     aimResult.pitchDeg = angle.y;
-    aimResult.centerX = tracked.center.x;
-    aimResult.centerY = tracked.center.y;
+    aimResult.centerX = originalCenter.x;
+    aimResult.centerY = originalCenter.y;
+
+    // 在画面上显示与瞄准结果一致的角度
+    cv::putText(rgb,
+                "Yaw:" + std::to_string(angle.x),
+                cv::Point(15, 190),
+                cv::FONT_HERSHEY_SIMPLEX,
+                0.7,
+                cv::Scalar(255, 255, 0),
+                2);
+
+    cv::putText(rgb,
+                "Pitch:" + std::to_string(angle.y),
+                cv::Point(15, 220),
+                cv::FONT_HERSHEY_SIMPLEX,
+                0.7,
+                cv::Scalar(255, 255, 0),
+                2);
 }
-
-    if (tracked.state == TrackState::TRACKING) {
-
-      cv::Point2f angle = cameraModel.pixelToAngle(tracked.center);
-
-      cv::putText(rgb, "Yaw:" + std::to_string(angle.x), cv::Point(15, 190),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
-
-      cv::putText(rgb, "Pitch:" + std::to_string(angle.y), cv::Point(15, 220),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
-    }
-
     // 读取触摸屏
     int touchX = 0;
     int touchY = 0;

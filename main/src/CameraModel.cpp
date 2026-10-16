@@ -82,22 +82,37 @@ cv::Point2f CameraModel::pixelToAngle(const cv::Point2f &pixel) const {
   return cv::Point2f(yaw, pitch);
 }
 
-bool CameraModel::setImageSize(int width, int height) {
-  if (!loaded_ || width <= 0 || height <= 0 || calibrationWidth_ <= 0 ||
-      calibrationHeight_ <= 0) {
-    return false;
-  }
+bool CameraModel::setImageSize(int width, int height)
+{
+    if (!loaded_ || width <= 0 || height <= 0) {
+        return false;
+    }
 
-  const float sx = static_cast<float>(width) / calibrationWidth_;
-  const float sy = static_cast<float>(height) / calibrationHeight_;
+    // 新标定文件必须与实际图像分辨率一致
+    if (width != calibrationWidth_ ||
+        height != calibrationHeight_) {
+        std::printf(
+            "Image size mismatch: calibration=%dx%d, runtime=%dx%d\n",
+            calibrationWidth_, calibrationHeight_,
+            width, height
+        );
+        return false;
+    }
 
-  fx_ = baseFx_ * sx;
-  fy_ = baseFy_ * sy;
-  cx_ = baseCx_ * sx;
-  cy_ = baseCy_ * sy;
+    // 直接使用标定内参，不进行缩放
+    fx_ = baseFx_;
+    fy_ = baseFy_;
+    cx_ = baseCx_;
+    cy_ = baseCy_;
 
-  imageWidth_ = width;
-  imageHeight_ = height;
+    imageWidth_ = width;
+    imageHeight_ = height;
 
-  return true;
+    std::printf(
+        "Using native calibration: %dx%d, "
+        "fx=%.3f, fy=%.3f, cx=%.3f, cy=%.3f\n",
+        width, height, fx_, fy_, cx_, cy_
+    );
+
+    return true;
 }
