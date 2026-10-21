@@ -97,25 +97,81 @@ public:
                 + 1.5f * speed
                 + 15.0f * target_.missedFrames);
 
+        
+        // 将上一帧的框平移到预测中心
+        cv::Rect predictedBox = target_.bbox;
+        predictedBox.x += static_cast<int>(
+            std::lround(predictedCenter.x - target_.center.x));
+        predictedBox.y += static_cast<int>(
+            std::lround(predictedCenter.y - target_.center.y));
+
         int bestIndex = -1;
-        float bestDistance = std::numeric_limits<float>::max();
+        float bestScore = std::numeric_limits<float>::max();
 
         for (int i = 0;
              i < static_cast<int>(detections.size());
              ++i)
         {
+            const ArmorTarget& candidate = detections[i];
             const cv::Point2f delta =
-                detections[i].center - predictedCenter;
+                candidate.center - predictedCenter;
 
             const float distance = std::sqrt(
                 delta.x * delta.x + delta.y * delta.y);
 
-            if (distance <= gate && distance < bestDistance)
+            // 第一关：中心距离不能超过门限
+            if (distance > gate)
             {
-                bestDistance = distance;
+                continue;
+            }
+
+            // 第二关：候选框的面积不能与原目标差异过大
+            const float oldArea =
+                static_cast<float>(predictedBox.area());
+            const float newArea =
+                static_cast<float>(candidate.bbox.area());
+
+            if (oldArea <= 0.0f || newArea <= 0.0f)
+            {
+                continue;
+            }
+
+            const float areaRatio =
+                std::min(oldArea, newArea) /
+                std::max(oldArea, newArea);
+
+            if (areaRatio < 0.35f)
+            {
+                continue;
+            }
+
+            // 第三关：计算预测框与候选框的 IoU
+            const cv::Rect intersection =
+                predictedBox & candidate.bbox;
+
+            const float intersectionArea =
+                static_cast<float>(intersection.area());
+
+            const float unionArea =
+                oldArea + newArea - intersectionArea;
+
+            const float iou = unionArea > 0.0f
+                ? intersectionArea / unionArea
+                : 0.0f;
+
+            // 综合评分：距离越小、重叠越大、面积越接近越好
+            const float score =
+                distance
+                + 35.0f * (1.0f - iou)
+                + 20.0f * (1.0f - areaRatio);
+
+            if (score < bestScore)
+            {
+                bestScore = score;
                 bestIndex = i;
             }
         }
+
 
         // 找到匹配目标：用真实观测修正卡尔曼预测。
         if (bestIndex >= 0)
