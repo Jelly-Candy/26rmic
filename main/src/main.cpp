@@ -2,6 +2,7 @@
 #include "maix_camera.hpp"
 #include "maix_display.hpp"
 #include "maix_touchscreen.hpp"
+#include "maix_uart.hpp"
 
 #include "AimResult.hpp"
 #include "AimUart.hpp"
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <opencv2/opencv.hpp>
 #include <string>
+#include <memory>
 #include <vector>
 
 using namespace maix;
@@ -118,6 +120,27 @@ int _main(int argc, char *argv[]) {
 
   // 用于 UART 通信的序列号
   uint8_t txSeq = 0;
+  // 初始化 UART
+std::vector<std::string> ports = peripheral::uart::list_devices();
+// 列出所有可用的 UART 设备
+for (const auto &port : ports) {
+    log::info("UART device: %s", port.c_str());
+}
+
+if (ports.empty()) {
+    log::error("No UART device found!");
+    return -1;
+}
+
+for (const auto &port : ports) {
+    log::info("Found UART device: %s", port.c_str());
+}
+
+// 临时选择第一个设备用于测试。
+// 确认实际连接的设备后，应改为明确指定的设备名。
+peripheral::uart::UART serial(ports[0], 115200);
+
+log::info("UART opened: %s", ports[0].c_str());
 
   display::Display disp;
 
@@ -259,6 +282,11 @@ int _main(int argc, char *argv[]) {
 
     uint8_t txFrame[AimUart::FRAME_SIZE];
     AimUart::encode(aimResult, txSeq++, txFrame);
+    int written = serial.write(txFrame, AimUart::FRAME_SIZE);
+
+if (written != AimUart::FRAME_SIZE) {
+    log::error("UART write failed or incomplete: %d", written);
+}
 
     // 读取触摸屏
     int touchX = 0;
