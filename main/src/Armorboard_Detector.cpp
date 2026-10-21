@@ -47,7 +47,6 @@ Mat ArmorDetector::makeColorMask(const Mat &frame) {
                 redMask1);
     cv::inRange(hsv, cv::Scalar(170, 180, 130), cv::Scalar(180, 255, 255),
                 redMask2);
-    cv::Mat mask;
     cv::bitwise_or(redMask1, redMask2, mask);
   }
   return mask;
