@@ -10,6 +10,9 @@ enum class EnemyColor { BLUE, RED };
 struct ArmorTarget {
   cv::Point2f center; // 装甲板中心，单位：像素
   cv::Rect bbox;      // 装甲板估计外接矩形
+
+  // 顺序固定：左上、右上、右下、左下
+  cv::Point2f corners[4];
 };
 
 // 调试信息：供主程序绘制中间处理结果
