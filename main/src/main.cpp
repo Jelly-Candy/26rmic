@@ -101,19 +101,33 @@ static cv::Point2f flippedToOriginal(const cv::Point2f &point, int width,
 }
 
 // 测试 AimUart 编码功能
-void testAimUart() {
-  AimResult result{};
-  result.targetFound = true;
-  result.yawDeg = 1.234f;
-  result.pitchDeg = -2.500f;
+void testAimUart()
+{
+    AimResult result{};
+    result.targetFound = true;
+    result.yawDeg = 1.234f;
+    result.pitchDeg = -2.500f;
 
-  uint8_t frame[AimUart::FRAME_SIZE];
-  AimUart::encode(result, 0, frame);
+    result.imu.valid = true;
+    result.imu.attitudeValid = true;
+    result.imu.rollDeg = 1.0f;
+    result.imu.pitchDeg = 2.0f;
+    result.imu.yawDeg = 3.0f;
+    result.imu.gx = 10.0f;
+    result.imu.gy = 20.0f;
+    result.imu.gz = 30.0f;
+    result.imu.ax = 0.1f;
+    result.imu.ay = 0.2f;
+    result.imu.az = 1.0f;
+    result.imu.dtSeconds = 0.005f;
 
-  for (std::size_t i = 0; i < AimUart::FRAME_SIZE; ++i) {
-    std::printf("%02X ", frame[i]);
-  }
-  std::printf("\n");
+    uint8_t frame[AimUart::FRAME_SIZE];
+    AimUart::encode(result, 0, frame);
+
+    for (std::size_t i = 0; i < AimUart::FRAME_SIZE; ++i)
+        std::printf("%02X ", frame[i]);
+
+    std::printf("\n");
 }
 
 int _main(int argc, char *argv[]) {
@@ -289,26 +303,55 @@ int _main(int argc, char *argv[]) {
     }
 
     //读取并打印 IMU 数据
+    // 读取 IMU，并把数据放入本帧 UART 发送结果。
     static uint64_t lastImuLogMs = 0;
 
-    if (imuReader.isInitialized()) {
-      ImuReader::Sample imuSample;
+    if (imuReader.isInitialized())
+    {
+        ImuReader::Sample imuSample;
 
-      if (imuReader.read(imuSample)) {
-        // 每 100 ms 打印一次，避免终端日志过多。
-        if (imuSample.timestampMs - lastImuLogMs >= 100) {
-          lastImuLogMs = imuSample.timestampMs;
+        if (imuReader.read(imuSample))
+        {
+            aimResult.imu.valid = true;
+            aimResult.imu.attitudeValid = imuSample.attitudeValid;
+            aimResult.imu.dtOutOfRange = imuSample.dtOutOfRange;
 
-          std::printf("[IMU] dt=%.4f s | "
-                      "gyro=(%7.3f, %7.3f, %7.3f) deg/s | "
-                      "acc=(%6.3f, %6.3f, %6.3f) g | "
-                      "temp=%.1f C\n",
-                      imuSample.dtSeconds, imuSample.gx, imuSample.gy,
-                      imuSample.gz, imuSample.ax, imuSample.ay, imuSample.az,
-                      imuSample.temperature);
+            aimResult.imu.rollDeg = imuSample.rollDeg;
+            aimResult.imu.pitchDeg = imuSample.pitchDeg;
+            aimResult.imu.yawDeg = imuSample.yawDeg;
+
+            aimResult.imu.gx = imuSample.gx;
+            aimResult.imu.gy = imuSample.gy;
+            aimResult.imu.gz = imuSample.gz;
+
+            aimResult.imu.ax = imuSample.ax;
+            aimResult.imu.ay = imuSample.ay;
+            aimResult.imu.az = imuSample.az;
+
+            aimResult.imu.dtSeconds = imuSample.dtSeconds;
+
+            if (imuSample.timestampMs - lastImuLogMs >= 200)
+            {
+                lastImuLogMs = imuSample.timestampMs;
+
+                std::printf(
+                    "[IMU] dt=%.4f s attitude=(%.2f, %.2f, %.2f) "
+                    "gyro=(%.2f, %.2f, %.2f) "
+                    "acc=(%.3f, %.3f, %.3f) g\n",
+                    imuSample.dtSeconds,
+                    imuSample.rollDeg,
+                    imuSample.pitchDeg,
+                    imuSample.yawDeg,
+                    imuSample.gx,
+                    imuSample.gy,
+                    imuSample.gz,
+                    imuSample.ax,
+                    imuSample.ay,
+                    imuSample.az);
+            }
         }
-      }
     }
+
 
     uint8_t txFrame[AimUart::FRAME_SIZE];
     AimUart::encode(aimResult, txSeq++, txFrame);

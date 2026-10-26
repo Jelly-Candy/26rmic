@@ -1,9 +1,7 @@
-
 #pragma once
 
 #include <cstdint>
 #include <memory>
-#include <string>
 
 #include "maix_imu.hpp"
 
@@ -23,6 +21,13 @@ public:
         float temperature = 0.0f;
         uint64_t timestampMs = 0;
         float dtSeconds = 0.0f;
+
+        float rollDeg = 0.0f;
+        float pitchDeg = 0.0f;
+        float yawDeg = 0.0f;
+
+        bool attitudeValid = false;
+        bool dtOutOfRange = false;
     };
 
     ImuReader() = default;
@@ -31,11 +36,7 @@ public:
     ImuReader(const ImuReader&) = delete;
     ImuReader& operator=(const ImuReader&) = delete;
 
-    // 初始化 IMU，并加载已有校准数据。
-    // 若没有校准数据，则在设备静止时执行校准。
     bool initialize();
-
-    // 读取一次数据。
     bool read(Sample& sample);
 
     bool isInitialized() const
@@ -44,6 +45,15 @@ public:
     }
 
 private:
+    void updateAttitude(Sample& sample);
+
     std::unique_ptr<maix::ext_dev::imu::IMU> imu_;
+
     uint64_t lastTimestampMs_ = 0;
+
+    float rollRad_ = 0.0f;
+    float pitchRad_ = 0.0f;
+    float yawRad_ = 0.0f;
+
+    bool attitudeInitialized_ = false;
 };
