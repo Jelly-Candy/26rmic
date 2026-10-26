@@ -100,35 +100,78 @@ static cv::Point2f flippedToOriginal(const cv::Point2f &point, int width,
                      static_cast<float>(height - 1) - point.y);
 }
 
-// 测试 AimUart 编码功能
-void testAimUart()
+
+/**
+ * UART 启动前自检：
+ * 1. 编码固定的 AimResult 测试数据
+ * 2. 通过实际 UART 发送 20 帧
+ * 3. 检查每次 write 返回的字节数
+ *
+ * 注意：这里的 IMU 数据是模拟值，仅用于测试通信协议。
+ */
+bool testAimUart(peripheral::uart::UART &serial)
 {
+    constexpr int TEST_FRAME_COUNT = 20;
+    uint8_t frame[AimUart::FRAME_SIZE];
+
     AimResult result{};
     result.targetFound = true;
     result.yawDeg = 1.234f;
     result.pitchDeg = -2.500f;
 
+    // 模拟 IMU 数据，仅用于验证 UART 帧格式
     result.imu.valid = true;
     result.imu.attitudeValid = true;
     result.imu.rollDeg = 1.0f;
     result.imu.pitchDeg = 2.0f;
     result.imu.yawDeg = 3.0f;
+
     result.imu.gx = 10.0f;
     result.imu.gy = 20.0f;
     result.imu.gz = 30.0f;
+
     result.imu.ax = 0.1f;
     result.imu.ay = 0.2f;
     result.imu.az = 1.0f;
     result.imu.dtSeconds = 0.005f;
 
-    uint8_t frame[AimUart::FRAME_SIZE];
-    AimUart::encode(result, 0, frame);
+    int successCount = 0;
+    uint8_t testSeq = 0;
 
-    for (std::size_t i = 0; i < AimUart::FRAME_SIZE; ++i)
-        std::printf("%02X ", frame[i]);
+    log::info("========== UART SELF TEST BEGIN ==========");
+    log::info("Device test: %d frames, %d bytes/frame",
+              TEST_FRAME_COUNT, static_cast<int>(AimUart::FRAME_SIZE));
 
-    std::printf("\n");
+    for (int i = 0; i < TEST_FRAME_COUNT; ++i)
+    {
+        AimUart::encode(result, testSeq++, frame);
+
+        int written = serial.write(frame, AimUart::FRAME_SIZE);
+
+        if (written == static_cast<int>(AimUart::FRAME_SIZE))
+        {
+            ++successCount;
+            log::info("UART test frame %d/%d sent, bytes=%d",
+                      i + 1, TEST_FRAME_COUNT, written);
+        }
+        else
+        {
+            log::error("UART test frame %d/%d failed: written=%d, expected=%d",
+                       i + 1, TEST_FRAME_COUNT, written,
+                       static_cast<int>(AimUart::FRAME_SIZE));
+        }
+
+        // 每帧间隔 100ms，方便 STM32 接收和调试
+        time::sleep_ms(100);
+    }
+
+    log::info("UART SELF TEST RESULT: %d/%d frames written",
+              successCount, TEST_FRAME_COUNT);
+    log::info("========== UART SELF TEST END ==========");
+
+    return successCount == TEST_FRAME_COUNT;
 }
+
 
 int _main(int argc, char *argv[]) {
   camera::Camera cam(640, 480, image::Format::FMT_RGB888);
@@ -151,11 +194,20 @@ int _main(int argc, char *argv[]) {
     log::info("Found UART device: %s", port.c_str());
   }
 
-  // 临时选择第一个设备用于测试。
-  // 确认实际连接的设备后，应改为明确指定的设备名。
-  peripheral::uart::UART serial(ports[0], 115200);
+// MaixCAM 2 UART2: U2T / U2R
+const std::string uartDevice = "/dev/ttyS2";
+peripheral::uart::UART serial(uartDevice, 115200);
 
-  log::info("UART opened: %s", ports[0].c_str());
+log::info("UART opened: %s", uartDevice.c_str());
+
+// 正式初始化 IMU、标定参数和进入识别流程前，先测试 UART。
+if (!testAimUart(serial))
+{
+    log::error("UART self-test failed. Stop before armor detection.");
+    return -1;
+}
+
+// 自检通过后再继续初始化。
 
   ImuReader imuReader;
 
@@ -188,8 +240,6 @@ int _main(int argc, char *argv[]) {
     log::error("camera image size configuration failed");
     return -1;
   }
-
-  testAimUart();
 
   log::info("=== ARMOR APP NEW VERSION ===");
 
