@@ -9,6 +9,7 @@
 #include "ArmorTracker.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
+#include "ImuReader.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -141,6 +142,13 @@ int _main(int argc, char *argv[]) {
   peripheral::uart::UART serial(ports[0], 115200);
 
   log::info("UART opened: %s", ports[0].c_str());
+
+  ImuReader imuReader;
+
+  if (!imuReader.initialize()) {
+    std::printf("[IMU] Disabled: initialization failed.\n");
+    // 暂时允许视觉程序继续运行。
+  }
 
   display::Display disp;
 
@@ -278,6 +286,28 @@ int _main(int argc, char *argv[]) {
 
       cv::putText(rgb, "Pitch:" + std::to_string(angle.y), cv::Point(15, 220),
                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+    }
+
+    //读取并打印 IMU 数据
+    static uint64_t lastImuLogMs = 0;
+
+    if (imuReader.isInitialized()) {
+      ImuReader::Sample imuSample;
+
+      if (imuReader.read(imuSample)) {
+        // 每 100 ms 打印一次，避免终端日志过多。
+        if (imuSample.timestampMs - lastImuLogMs >= 100) {
+          lastImuLogMs = imuSample.timestampMs;
+
+          std::printf("[IMU] dt=%.4f s | "
+                      "gyro=(%7.3f, %7.3f, %7.3f) deg/s | "
+                      "acc=(%6.3f, %6.3f, %6.3f) g | "
+                      "temp=%.1f C\n",
+                      imuSample.dtSeconds, imuSample.gx, imuSample.gy,
+                      imuSample.gz, imuSample.ax, imuSample.ay, imuSample.az,
+                      imuSample.temperature);
+        }
+      }
     }
 
     uint8_t txFrame[AimUart::FRAME_SIZE];
