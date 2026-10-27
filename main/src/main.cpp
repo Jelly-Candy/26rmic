@@ -1,4 +1,7 @@
-#include "maix_basic.hpp"
+#include "maix_app.hpp"
+#include "maix_time.hpp"
+#include "maix_sys.hpp"
+#include "maix_log.hpp"
 #include "maix_camera.hpp"
 #include "maix_display.hpp"
 #include "maix_touchscreen.hpp"
@@ -7,10 +10,13 @@
 #include "AimResult.hpp"
 #include "AimUart.hpp"
 #include "ArmorTracker.hpp"
+#include "AimTrackGate.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
 #include "ImuReader.hpp"
 
+#include <cstdlib>
+#include "UartFrameWriter.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -93,14 +99,6 @@ static void draw_color_menu(cv::Mat &rgb, EnemyColor selected) {
               1.0, cv::Scalar(255, 255, 255), 2);
 }
 
-// 将旋转 180°后的图像坐标还原到原始标定图像坐标
-static cv::Point2f flippedToOriginal(const cv::Point2f &point, int width,
-                                     int height) {
-  return cv::Point2f(static_cast<float>(width - 1) - point.x,
-                     static_cast<float>(height - 1) - point.y);
-}
-
-
 /**
  * UART 启动前自检：
  * 1. 编码固定的 AimResult 测试数据
@@ -146,7 +144,7 @@ bool testAimUart(peripheral::uart::UART &serial)
     {
         AimUart::encode(result, testSeq++, frame);
 
-        int written = serial.write(frame, AimUart::FRAME_SIZE);
+        int written = writeCompleteFrame(serial, frame, AimUart::FRAME_SIZE) ? static_cast<int>(AimUart::FRAME_SIZE) : -1;
 
         if (written == static_cast<int>(AimUart::FRAME_SIZE))
         {
@@ -201,7 +199,8 @@ peripheral::uart::UART serial(uartDevice, 115200);
 log::info("UART opened: %s", uartDevice.c_str());
 
 // 正式初始化 IMU、标定参数和进入识别流程前，先测试 UART。
-if (!testAimUart(serial))
+const char *uartTest = std::getenv("MAIX_UART_TEST");
+if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
 {
     log::error("UART self-test failed. Stop before armor detection.");
     return -1;
@@ -226,9 +225,15 @@ if (!testAimUart(serial))
   EnemyColor selectedColor = EnemyColor::BLUE;
   bool confirmed = false;
   bool lastPressed = false;
+  const char *autoColor = std::getenv("RMIC_ENEMY_COLOR");
+  if (autoColor && (std::string(autoColor)=="red" || std::string(autoColor)=="blue")) {
+    selectedColor=std::string(autoColor)=="red"?EnemyColor::RED:EnemyColor::BLUE;
+    confirmed=true;
+  }
 
   ArmorDetector detector(selectedColor);
   ArmorTracker tracker(80.0f, 5);
+  AimTrackGate aimGate;
   CameraModel cameraModel;
 
   if (!cameraModel.load("/root/camera_intrinsics.yml")) {
@@ -241,7 +246,7 @@ if (!testAimUart(serial))
     return -1;
   }
 
-  log::info("=== ARMOR APP NEW VERSION ===");
+  log::info("=== RMIC26 MOUNT180 TRACK v2: upright image, yaw right+, pitch up+; IMU axes unchanged ===");
 
   while (!app::need_exit() && !confirmed) {
     image::Image *img = cam.read();
@@ -298,6 +303,11 @@ if (!testAimUart(serial))
 
   DebugMode debugMode = DebugMode::FINAL;
   bool debugLastPressed = false;
+  const char *captureDir = std::getenv("RMIC_CAPTURE_DIR");
+  unsigned captureCount=0;
+  FILE *trace=nullptr;
+  if(captureDir)trace=std::fopen((std::string(captureDir)+"/trace.csv").c_str(),"w");
+  if(trace)std::fprintf(trace,"ms,detected,state,missed,x,y\n");
 
   while (!app::need_exit()) {
     image::Image *img = cam.read();
@@ -316,33 +326,50 @@ if (!testAimUart(serial))
     const int height = img->height();
 
     cv::Mat rgb(height, width, CV_8UC3, img->data());
+    // Physical camera is rolled 180 degrees: correct pixels exactly once,
+    // before detection and before drawing upright overlays.
+    cv::rotate(rgb, rgb, cv::ROTATE_180);
 
     // 获取当前帧的检测结果和中间调试数据
     ArmorDebugInfo debugInfo;
     std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
     const TrackedTarget &tracked = tracker.update(targets);
 
+    if(captureDir && captureCount<150) {
+      char name[256];std::snprintf(name,sizeof(name),"%s/%04u.png",captureDir,captureCount++);
+      cv::Mat bgr;cv::cvtColor(rgb,bgr,cv::COLOR_RGB2BGR);
+      cv::imwrite(name,bgr,{cv::IMWRITE_PNG_COMPRESSION,1});
+      if(trace){std::fprintf(trace,"%llu,%zu,%d,%d,%.3f,%.3f\n",(unsigned long long)time::ticks_ms(),targets.size(),(int)tracked.state,tracked.missedFrames,tracked.center.x,tracked.center.y);std::fflush(trace);}
+    }
     // 统一保存本帧的瞄准结果
     AimResult aimResult;
 
     // 绿十字
-    cv::drawMarker(rgb, cv::Point(width - 1 - 294, height - 1 - 244),
+    cv::drawMarker(rgb, cameraModel.mountedPrincipalPoint(),
                    cv::Scalar(0, 255, 0), cv::MARKER_CROSS, 30, 3);
 
-    if (tracked.state == TrackState::TRACKING) {
-      // 将翻转后图像中的目标坐标还原到原始标定图像坐标
-      const cv::Point2f originalCenter =
-          flippedToOriginal(tracked.center, width, height);
-
-      // 使用原始图像坐标计算角度，只计算一次
-      const cv::Point2f angle = cameraModel.pixelToAngle(originalCenter);
+    cv::Point2f aimCenter;
+    const uint32_t frameNow=static_cast<uint32_t>(time::ticks_ms());
+    const bool aimValid=aimGate.update(tracked,frameNow,aimCenter);
+    static uint32_t statMs=frameNow;static unsigned statN=0,statDetected=0,statMeasured=0,statHeld=0,statAim=0;
+    ++statN;statDetected+=!targets.empty();statMeasured+=tracked.state==TrackState::TRACKING;
+    statHeld+=aimValid && aimGate.held();statAim+=aimValid;
+    if(uint32_t(frameNow-statMs)>=1000U){
+      log::info("[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",statN,statDetected,statMeasured,statHeld,statAim);
+      statN=statDetected=statMeasured=statHeld=statAim=0;statMs=frameNow;
+    }
+    if (aimValid) {
+      cv::putText(rgb,aimGate.held()?"Aim: HOLD <=60ms":"Aim: MEASURED",cv::Point(15,250),cv::FONT_HERSHEY_SIMPLEX,0.55,cv::Scalar(255,255,0),1);
+      // Input and output are in the upright, mounted camera frame.
+      // Original calibration remains unchanged; CameraModel handles the roll.
+      const cv::Point2f angle = cameraModel.mountedPixelToAngle(aimCenter);
 
       // 填充瞄准结果
       aimResult.targetFound = true;
       aimResult.yawDeg = angle.x;
       aimResult.pitchDeg = angle.y;
-      aimResult.centerX = originalCenter.x;
-      aimResult.centerY = originalCenter.y;
+      aimResult.centerX = aimCenter.x;
+      aimResult.centerY = aimCenter.y;
 
       // 在画面上显示与瞄准结果一致的角度
       cv::putText(rgb, "Yaw:" + std::to_string(angle.x), cv::Point(15, 190),
@@ -405,7 +432,7 @@ if (!testAimUart(serial))
 
     uint8_t txFrame[AimUart::FRAME_SIZE];
     AimUart::encode(aimResult, txSeq++, txFrame);
-    int written = serial.write(txFrame, AimUart::FRAME_SIZE);
+    int written = writeCompleteFrame(serial, txFrame, AimUart::FRAME_SIZE) ? static_cast<int>(AimUart::FRAME_SIZE) : -1;
 
     if (written != AimUart::FRAME_SIZE) {
       log::error("UART write failed or incomplete: %d", written);
@@ -571,6 +598,31 @@ if (!testAimUart(serial))
 }
 
 int main(int argc, char *argv[]) {
+  // Read-only runtime checks: neither branch opens UART or commands actuators.
+  if (argc > 1 && std::string(argv[1]) == "--check-mount") {
+    CameraModel model;
+    if (!model.load("/root/camera_intrinsics.yml") || !model.setImageSize(640,480)) return 2;
+    const auto center = model.mountedPrincipalPoint();
+    const auto zero = model.mountedPixelToAngle(center);
+    const auto rightUp = model.mountedPixelToAngle(center + cv::Point2f(80,-60));
+    if (std::fabs(zero.x)>0.001f || std::fabs(zero.y)>0.001f || rightUp.x<=0 || rightUp.y<=0) return 3;
+    std::printf("MOUNT180 CHECK PASS: right-up yaw=%.3f pitch=%.3f; UART not opened\n",rightUp.x,rightUp.y);
+    return 0;
+  }
+  if (argc > 1 && std::string(argv[1]) == "--preview-check") {
+    camera::Camera camera(640,480,image::Format::FMT_RGB888);
+    display::Display display;
+    for (int n=0;n<30;++n) {
+      std::unique_ptr<image::Image> img(camera.read());
+      if (!img || img->format()!=image::Format::FMT_RGB888) return 4;
+      cv::Mat rgb(img->height(),img->width(),CV_8UC3,img->data());
+      cv::rotate(rgb,rgb,cv::ROTATE_180);
+      display.show(*img);
+    }
+    std::puts("MOUNT180 CAMERA/DISPLAY CHECK PASS: 30 upright frames; UART not opened");
+    return 0;
+  }
+
   sys::register_default_signal_handle();
   CATCH_EXCEPTION_RUN_RETURN(_main, -1, argc, argv);
 }
