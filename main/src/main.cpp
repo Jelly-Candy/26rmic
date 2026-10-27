@@ -1,7 +1,7 @@
 #include "maix_app.hpp"
 #include "maix_camera.hpp"
 #include "maix_display.hpp"
-#include "maix_http.hpp"
+#include "maix_jpg_stream.hpp"
 #include "maix_log.hpp"
 #include "maix_sys.hpp"
 #include "maix_time.hpp"
