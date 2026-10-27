@@ -19,6 +19,8 @@ public:
     ) const;
 
 bool setImageSize(int width, int height);
+    cv::Point2f mountedPixelToAngle(const cv::Point2f &pixel) const;
+    cv::Point2f mountedPrincipalPoint() const;
 
 private:
     float baseFx_, baseFy_, baseCx_, baseCy_;

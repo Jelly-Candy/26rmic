@@ -71,9 +71,9 @@ cv::Point2f CameraModel::pixelToAngle(const cv::Point2f &pixel) const {
     return cv::Point2f(0, 0);
   }
 
-  float x = (pixel.x - cx_) / fx_;
 
-  float y = (pixel.y - cy_) / fy_;
+
+
 
   float yaw = std::atan((pixel.x - cx_) / fx_) * 180.0f / CV_PI;
 
@@ -115,4 +115,16 @@ bool CameraModel::setImageSize(int width, int height)
     );
 
     return true;
+}
+// The raw calibration belongs to the unrotated sensor image. A 180-degree
+// roll negates both optical ray components, but not the positive focal lengths.
+cv::Point2f CameraModel::mountedPixelToAngle(const cv::Point2f &pixel) const {
+    const cv::Point2f raw(float(imageWidth_ - 1) - pixel.x,
+                          float(imageHeight_ - 1) - pixel.y);
+    const cv::Point2f rawAngle = pixelToAngle(raw);
+    return cv::Point2f(-rawAngle.x, -rawAngle.y);
+}
+cv::Point2f CameraModel::mountedPrincipalPoint() const {
+    return cv::Point2f(float(imageWidth_ - 1) - cx_,
+                       float(imageHeight_ - 1) - cy_);
 }
