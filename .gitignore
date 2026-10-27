@@ -1,4 +1,6 @@
 build
+tools
+tests
 dist
 .config.mk
 .flash.conf.json

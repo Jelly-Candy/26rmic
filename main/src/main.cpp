@@ -1,25 +1,25 @@
 #include "maix_app.hpp"
-#include "maix_time.hpp"
-#include "maix_sys.hpp"
-#include "maix_log.hpp"
 #include "maix_camera.hpp"
 #include "maix_display.hpp"
+#include "maix_log.hpp"
+#include "maix_sys.hpp"
+#include "maix_time.hpp"
 #include "maix_touchscreen.hpp"
 #include "maix_uart.hpp"
 
 #include "AimResult.hpp"
+#include "AimTrackGate.hpp"
 #include "AimUart.hpp"
 #include "ArmorTracker.hpp"
-#include "AimTrackGate.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
 #include "ImuReader.hpp"
-
-#include <cstdlib>
 #include "UartFrameWriter.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <opencv2/opencv.hpp>
 #include <string>
@@ -107,69 +107,65 @@ static void draw_color_menu(cv::Mat &rgb, EnemyColor selected) {
  *
  * 注意：这里的 IMU 数据是模拟值，仅用于测试通信协议。
  */
-bool testAimUart(peripheral::uart::UART &serial)
-{
-    constexpr int TEST_FRAME_COUNT = 20;
-    uint8_t frame[AimUart::FRAME_SIZE];
+bool testAimUart(peripheral::uart::UART &serial) {
+  constexpr int TEST_FRAME_COUNT = 20;
+  uint8_t frame[AimUart::FRAME_SIZE];
 
-    AimResult result{};
-    result.targetFound = true;
-    result.yawDeg = 1.234f;
-    result.pitchDeg = -2.500f;
+  AimResult result{};
+  result.targetFound = true;
+  result.yawDeg = 1.234f;
+  result.pitchDeg = -2.500f;
 
-    // 模拟 IMU 数据，仅用于验证 UART 帧格式
-    result.imu.valid = true;
-    result.imu.attitudeValid = true;
-    result.imu.rollDeg = 1.0f;
-    result.imu.pitchDeg = 2.0f;
-    result.imu.yawDeg = 3.0f;
+  // 模拟 IMU 数据，仅用于验证 UART 帧格式
+  result.imu.valid = true;
+  result.imu.attitudeValid = true;
+  result.imu.rollDeg = 1.0f;
+  result.imu.pitchDeg = 2.0f;
+  result.imu.yawDeg = 3.0f;
 
-    result.imu.gx = 10.0f;
-    result.imu.gy = 20.0f;
-    result.imu.gz = 30.0f;
+  result.imu.gx = 10.0f;
+  result.imu.gy = 20.0f;
+  result.imu.gz = 30.0f;
 
-    result.imu.ax = 0.1f;
-    result.imu.ay = 0.2f;
-    result.imu.az = 1.0f;
-    result.imu.dtSeconds = 0.005f;
+  result.imu.ax = 0.1f;
+  result.imu.ay = 0.2f;
+  result.imu.az = 1.0f;
+  result.imu.dtSeconds = 0.005f;
 
-    int successCount = 0;
-    uint8_t testSeq = 0;
+  int successCount = 0;
+  uint8_t testSeq = 0;
 
-    log::info("========== UART SELF TEST BEGIN ==========");
-    log::info("Device test: %d frames, %d bytes/frame",
-              TEST_FRAME_COUNT, static_cast<int>(AimUart::FRAME_SIZE));
+  log::info("========== UART SELF TEST BEGIN ==========");
+  log::info("Device test: %d frames, %d bytes/frame", TEST_FRAME_COUNT,
+            static_cast<int>(AimUart::FRAME_SIZE));
 
-    for (int i = 0; i < TEST_FRAME_COUNT; ++i)
-    {
-        AimUart::encode(result, testSeq++, frame);
+  for (int i = 0; i < TEST_FRAME_COUNT; ++i) {
+    AimUart::encode(result, testSeq++, frame);
 
-        int written = writeCompleteFrame(serial, frame, AimUart::FRAME_SIZE) ? static_cast<int>(AimUart::FRAME_SIZE) : -1;
+    int written = writeCompleteFrame(serial, frame, AimUart::FRAME_SIZE)
+                      ? static_cast<int>(AimUart::FRAME_SIZE)
+                      : -1;
 
-        if (written == static_cast<int>(AimUart::FRAME_SIZE))
-        {
-            ++successCount;
-            log::info("UART test frame %d/%d sent, bytes=%d",
-                      i + 1, TEST_FRAME_COUNT, written);
-        }
-        else
-        {
-            log::error("UART test frame %d/%d failed: written=%d, expected=%d",
-                       i + 1, TEST_FRAME_COUNT, written,
-                       static_cast<int>(AimUart::FRAME_SIZE));
-        }
-
-        // 每帧间隔 100ms，方便 STM32 接收和调试
-        time::sleep_ms(100);
+    if (written == static_cast<int>(AimUart::FRAME_SIZE)) {
+      ++successCount;
+      log::info("UART test frame %d/%d sent, bytes=%d", i + 1, TEST_FRAME_COUNT,
+                written);
+    } else {
+      log::error("UART test frame %d/%d failed: written=%d, expected=%d", i + 1,
+                 TEST_FRAME_COUNT, written,
+                 static_cast<int>(AimUart::FRAME_SIZE));
     }
 
-    log::info("UART SELF TEST RESULT: %d/%d frames written",
-              successCount, TEST_FRAME_COUNT);
-    log::info("========== UART SELF TEST END ==========");
+    // 每帧间隔 100ms，方便 STM32 接收和调试
+    time::sleep_ms(100);
+  }
 
-    return successCount == TEST_FRAME_COUNT;
+  log::info("UART SELF TEST RESULT: %d/%d frames written", successCount,
+            TEST_FRAME_COUNT);
+  log::info("========== UART SELF TEST END ==========");
+
+  return successCount == TEST_FRAME_COUNT;
 }
-
 
 int _main(int argc, char *argv[]) {
   camera::Camera cam(640, 480, image::Format::FMT_RGB888);
@@ -192,21 +188,20 @@ int _main(int argc, char *argv[]) {
     log::info("Found UART device: %s", port.c_str());
   }
 
-// MaixCAM 2 UART2: U2T / U2R
-const std::string uartDevice = "/dev/ttyS2";
-peripheral::uart::UART serial(uartDevice, 115200);
+  // MaixCAM 2 UART2: U2T / U2R
+  const std::string uartDevice = "/dev/ttyS2";
+  peripheral::uart::UART serial(uartDevice, 115200);
 
-log::info("UART opened: %s", uartDevice.c_str());
+  log::info("UART opened: %s", uartDevice.c_str());
 
-// 正式初始化 IMU、标定参数和进入识别流程前，先测试 UART。
-const char *uartTest = std::getenv("MAIX_UART_TEST");
-if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
-{
+  // 正式初始化 IMU、标定参数和进入识别流程前，先测试 UART。
+  const char *uartTest = std::getenv("MAIX_UART_TEST");
+  if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial)) {
     log::error("UART self-test failed. Stop before armor detection.");
     return -1;
-}
+  }
 
-// 自检通过后再继续初始化。
+  // 自检通过后再继续初始化。
 
   ImuReader imuReader;
 
@@ -226,9 +221,11 @@ if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
   bool confirmed = false;
   bool lastPressed = false;
   const char *autoColor = std::getenv("RMIC_ENEMY_COLOR");
-  if (autoColor && (std::string(autoColor)=="red" || std::string(autoColor)=="blue")) {
-    selectedColor=std::string(autoColor)=="red"?EnemyColor::RED:EnemyColor::BLUE;
-    confirmed=true;
+  if (autoColor &&
+      (std::string(autoColor) == "red" || std::string(autoColor) == "blue")) {
+    selectedColor =
+        std::string(autoColor) == "red" ? EnemyColor::RED : EnemyColor::BLUE;
+    confirmed = true;
   }
 
   ArmorDetector detector(selectedColor);
@@ -246,7 +243,7 @@ if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
     return -1;
   }
 
-  log::info("=== RMIC26 MOUNT180 TRACK v2: upright image, yaw right+, pitch up+; IMU axes unchanged ===");
+  log::info("=== RMIC26 ===");
 
   while (!app::need_exit() && !confirmed) {
     image::Image *img = cam.read();
@@ -304,10 +301,12 @@ if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
   DebugMode debugMode = DebugMode::FINAL;
   bool debugLastPressed = false;
   const char *captureDir = std::getenv("RMIC_CAPTURE_DIR");
-  unsigned captureCount=0;
-  FILE *trace=nullptr;
-  if(captureDir)trace=std::fopen((std::string(captureDir)+"/trace.csv").c_str(),"w");
-  if(trace)std::fprintf(trace,"ms,detected,state,missed,x,y\n");
+  unsigned captureCount = 0;
+  FILE *trace = nullptr;
+  if (captureDir)
+    trace = std::fopen((std::string(captureDir) + "/trace.csv").c_str(), "w");
+  if (trace)
+    std::fprintf(trace, "ms,detected,state,missed,x,y\n");
 
   while (!app::need_exit()) {
     image::Image *img = cam.read();
@@ -335,11 +334,20 @@ if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
     std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
     const TrackedTarget &tracked = tracker.update(targets);
 
-    if(captureDir && captureCount<150) {
-      char name[256];std::snprintf(name,sizeof(name),"%s/%04u.png",captureDir,captureCount++);
-      cv::Mat bgr;cv::cvtColor(rgb,bgr,cv::COLOR_RGB2BGR);
-      cv::imwrite(name,bgr,{cv::IMWRITE_PNG_COMPRESSION,1});
-      if(trace){std::fprintf(trace,"%llu,%zu,%d,%d,%.3f,%.3f\n",(unsigned long long)time::ticks_ms(),targets.size(),(int)tracked.state,tracked.missedFrames,tracked.center.x,tracked.center.y);std::fflush(trace);}
+    if (captureDir && captureCount < 150) {
+      char name[256];
+      std::snprintf(name, sizeof(name), "%s/%04u.png", captureDir,
+                    captureCount++);
+      cv::Mat bgr;
+      cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
+      cv::imwrite(name, bgr, {cv::IMWRITE_PNG_COMPRESSION, 1});
+      if (trace) {
+        std::fprintf(trace, "%llu,%zu,%d,%d,%.3f,%.3f\n",
+                     (unsigned long long)time::ticks_ms(), targets.size(),
+                     (int)tracked.state, tracked.missedFrames, tracked.center.x,
+                     tracked.center.y);
+        std::fflush(trace);
+      }
     }
     // 统一保存本帧的瞄准结果
     AimResult aimResult;
@@ -349,17 +357,26 @@ if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
                    cv::Scalar(0, 255, 0), cv::MARKER_CROSS, 30, 3);
 
     cv::Point2f aimCenter;
-    const uint32_t frameNow=static_cast<uint32_t>(time::ticks_ms());
-    const bool aimValid=aimGate.update(tracked,frameNow,aimCenter);
-    static uint32_t statMs=frameNow;static unsigned statN=0,statDetected=0,statMeasured=0,statHeld=0,statAim=0;
-    ++statN;statDetected+=!targets.empty();statMeasured+=tracked.state==TrackState::TRACKING;
-    statHeld+=aimValid && aimGate.held();statAim+=aimValid;
-    if(uint32_t(frameNow-statMs)>=1000U){
-      log::info("[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",statN,statDetected,statMeasured,statHeld,statAim);
-      statN=statDetected=statMeasured=statHeld=statAim=0;statMs=frameNow;
+    const uint32_t frameNow = static_cast<uint32_t>(time::ticks_ms());
+    const bool aimValid = aimGate.update(tracked, frameNow, aimCenter);
+    static uint32_t statMs = frameNow;
+    static unsigned statN = 0, statDetected = 0, statMeasured = 0, statHeld = 0,
+                    statAim = 0;
+    ++statN;
+    statDetected += !targets.empty();
+    statMeasured += tracked.state == TrackState::TRACKING;
+    statHeld += aimValid && aimGate.held();
+    statAim += aimValid;
+    if (uint32_t(frameNow - statMs) >= 1000U) {
+      log::info("[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",
+                statN, statDetected, statMeasured, statHeld, statAim);
+      statN = statDetected = statMeasured = statHeld = statAim = 0;
+      statMs = frameNow;
     }
     if (aimValid) {
-      cv::putText(rgb,aimGate.held()?"Aim: HOLD <=60ms":"Aim: MEASURED",cv::Point(15,250),cv::FONT_HERSHEY_SIMPLEX,0.55,cv::Scalar(255,255,0),1);
+      cv::putText(rgb, aimGate.held() ? "Aim: HOLD <=60ms" : "Aim: MEASURED",
+                  cv::Point(15, 250), cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                  cv::Scalar(255, 255, 0), 1);
       // Input and output are in the upright, mounted camera frame.
       // Original calibration remains unchanged; CameraModel handles the roll.
       const cv::Point2f angle = cameraModel.mountedPixelToAngle(aimCenter);
@@ -379,60 +396,51 @@ if (uartTest && std::string(uartTest) == "1" && !testAimUart(serial))
                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
     }
 
-    //读取并打印 IMU 数据
-    // 读取 IMU，并把数据放入本帧 UART 发送结果。
+    // 读取并打印 IMU 数据
+    //  读取 IMU，并把数据放入本帧 UART 发送结果。
     static uint64_t lastImuLogMs = 0;
 
-    if (imuReader.isInitialized())
-    {
-        ImuReader::Sample imuSample;
+    if (imuReader.isInitialized()) {
+      ImuReader::Sample imuSample;
 
-        if (imuReader.read(imuSample))
-        {
-            aimResult.imu.valid = true;
-            aimResult.imu.attitudeValid = imuSample.attitudeValid;
-            aimResult.imu.dtOutOfRange = imuSample.dtOutOfRange;
+      if (imuReader.read(imuSample)) {
+        aimResult.imu.valid = true;
+        aimResult.imu.attitudeValid = imuSample.attitudeValid;
+        aimResult.imu.dtOutOfRange = imuSample.dtOutOfRange;
 
-            aimResult.imu.rollDeg = imuSample.rollDeg;
-            aimResult.imu.pitchDeg = imuSample.pitchDeg;
-            aimResult.imu.yawDeg = imuSample.yawDeg;
+        aimResult.imu.rollDeg = imuSample.rollDeg;
+        aimResult.imu.pitchDeg = imuSample.pitchDeg;
+        aimResult.imu.yawDeg = imuSample.yawDeg;
 
-            aimResult.imu.gx = imuSample.gx;
-            aimResult.imu.gy = imuSample.gy;
-            aimResult.imu.gz = imuSample.gz;
+        aimResult.imu.gx = imuSample.gx;
+        aimResult.imu.gy = imuSample.gy;
+        aimResult.imu.gz = imuSample.gz;
 
-            aimResult.imu.ax = imuSample.ax;
-            aimResult.imu.ay = imuSample.ay;
-            aimResult.imu.az = imuSample.az;
+        aimResult.imu.ax = imuSample.ax;
+        aimResult.imu.ay = imuSample.ay;
+        aimResult.imu.az = imuSample.az;
 
-            aimResult.imu.dtSeconds = imuSample.dtSeconds;
+        aimResult.imu.dtSeconds = imuSample.dtSeconds;
 
-            if (imuSample.timestampMs - lastImuLogMs >= 200)
-            {
-                lastImuLogMs = imuSample.timestampMs;
+        if (imuSample.timestampMs - lastImuLogMs >= 200) {
+          lastImuLogMs = imuSample.timestampMs;
 
-                std::printf(
-                    "[IMU] dt=%.4f s attitude=(%.2f, %.2f, %.2f) "
-                    "gyro=(%.2f, %.2f, %.2f) "
-                    "acc=(%.3f, %.3f, %.3f) g\n",
-                    imuSample.dtSeconds,
-                    imuSample.rollDeg,
-                    imuSample.pitchDeg,
-                    imuSample.yawDeg,
-                    imuSample.gx,
-                    imuSample.gy,
-                    imuSample.gz,
-                    imuSample.ax,
-                    imuSample.ay,
-                    imuSample.az);
-            }
+          std::printf("[IMU] dt=%.4f s attitude=(%.2f, %.2f, %.2f) "
+                      "gyro=(%.2f, %.2f, %.2f) "
+                      "acc=(%.3f, %.3f, %.3f) g\n",
+                      imuSample.dtSeconds, imuSample.rollDeg,
+                      imuSample.pitchDeg, imuSample.yawDeg, imuSample.gx,
+                      imuSample.gy, imuSample.gz, imuSample.ax, imuSample.ay,
+                      imuSample.az);
         }
+      }
     }
-
 
     uint8_t txFrame[AimUart::FRAME_SIZE];
     AimUart::encode(aimResult, txSeq++, txFrame);
-    int written = writeCompleteFrame(serial, txFrame, AimUart::FRAME_SIZE) ? static_cast<int>(AimUart::FRAME_SIZE) : -1;
+    int written = writeCompleteFrame(serial, txFrame, AimUart::FRAME_SIZE)
+                      ? static_cast<int>(AimUart::FRAME_SIZE)
+                      : -1;
 
     if (written != AimUart::FRAME_SIZE) {
       log::error("UART write failed or incomplete: %d", written);
@@ -601,25 +609,34 @@ int main(int argc, char *argv[]) {
   // Read-only runtime checks: neither branch opens UART or commands actuators.
   if (argc > 1 && std::string(argv[1]) == "--check-mount") {
     CameraModel model;
-    if (!model.load("/root/camera_intrinsics.yml") || !model.setImageSize(640,480)) return 2;
+    if (!model.load("/root/camera_intrinsics.yml") ||
+        !model.setImageSize(640, 480))
+      return 2;
     const auto center = model.mountedPrincipalPoint();
     const auto zero = model.mountedPixelToAngle(center);
-    const auto rightUp = model.mountedPixelToAngle(center + cv::Point2f(80,-60));
-    if (std::fabs(zero.x)>0.001f || std::fabs(zero.y)>0.001f || rightUp.x<=0 || rightUp.y<=0) return 3;
-    std::printf("MOUNT180 CHECK PASS: right-up yaw=%.3f pitch=%.3f; UART not opened\n",rightUp.x,rightUp.y);
+    const auto rightUp =
+        model.mountedPixelToAngle(center + cv::Point2f(80, -60));
+    if (std::fabs(zero.x) > 0.001f || std::fabs(zero.y) > 0.001f ||
+        rightUp.x <= 0 || rightUp.y <= 0)
+      return 3;
+    std::printf(
+        "MOUNT180 CHECK PASS: right-up yaw=%.3f pitch=%.3f; UART not opened\n",
+        rightUp.x, rightUp.y);
     return 0;
   }
   if (argc > 1 && std::string(argv[1]) == "--preview-check") {
-    camera::Camera camera(640,480,image::Format::FMT_RGB888);
+    camera::Camera camera(640, 480, image::Format::FMT_RGB888);
     display::Display display;
-    for (int n=0;n<30;++n) {
+    for (int n = 0; n < 30; ++n) {
       std::unique_ptr<image::Image> img(camera.read());
-      if (!img || img->format()!=image::Format::FMT_RGB888) return 4;
-      cv::Mat rgb(img->height(),img->width(),CV_8UC3,img->data());
-      cv::rotate(rgb,rgb,cv::ROTATE_180);
+      if (!img || img->format() != image::Format::FMT_RGB888)
+        return 4;
+      cv::Mat rgb(img->height(), img->width(), CV_8UC3, img->data());
+      cv::rotate(rgb, rgb, cv::ROTATE_180);
       display.show(*img);
     }
-    std::puts("MOUNT180 CAMERA/DISPLAY CHECK PASS: 30 upright frames; UART not opened");
+    std::puts("MOUNT180 CAMERA/DISPLAY CHECK PASS: 30 upright frames; UART not "
+              "opened");
     return 0;
   }
 
