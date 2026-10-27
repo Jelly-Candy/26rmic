@@ -1,6 +1,7 @@
 #include "maix_app.hpp"
 #include "maix_camera.hpp"
 #include "maix_display.hpp"
+#include "maix_http.hpp"
 #include "maix_log.hpp"
 #include "maix_sys.hpp"
 #include "maix_time.hpp"
@@ -201,8 +202,68 @@ int _main(int argc, char *argv[]) {
     return -1;
   }
 
-  // 自检通过后再继续初始化。
+  // ===== 手机网页视频监控 =====
+  http::JpegStreamer webStreamer("0.0.0.0", 8000, 2);
 
+  const std::string monitorHtml = R"HTML(
+  <!DOCTYPE html>
+  <html lang="zh-CN">
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>26rmic 自瞄监控</title>
+  <style>
+  body {
+    margin: 0;
+    padding: 16px;
+    background: #111827;
+    color: #f3f4f6;
+    font-family: sans-serif;
+  }
+  h2 { margin-top: 0; }
+  .panel {
+    max-width: 800px;
+    margin: auto;
+  }
+  img {
+    display: block;
+    width: 100%;
+    border-radius: 10px;
+    background: #000;
+  }
+  .note {
+    color: #9ca3af;
+    font-size: 14px;
+    margin-top: 12px;
+  }
+  </style>
+  </head>
+  <body>
+  <div class="panel">
+    <h2>26rmic 自瞄监控</h2>
+    <img src="/stream" alt="等待视频流">
+    <p class="note">
+      当前显示 MaixCAM 2 推送的图像。
+      请保持手机与设备连接在同一热点网络。
+    </p>
+  </div>
+  </body>
+  </html>
+  )HTML";
+
+  if (webStreamer.set_html(monitorHtml) != err::ERR_NONE) {
+    log::error("Failed to configure web monitor page");
+    return -1;
+  }
+
+  if (webStreamer.start() != err::ERR_NONE) {
+    log::error("Failed to start web video streamer");
+    return -1;
+  }
+
+  log::info("Web video streamer started on port 8000");
+
+  // 自检通过后再继续初始化。
   ImuReader imuReader;
 
   if (!imuReader.initialize()) {
@@ -283,6 +344,12 @@ int _main(int argc, char *argv[]) {
     }
 
     draw_color_menu(rgb, selectedColor);
+
+    // 将与本地屏幕相同的图像推送到网页
+    if (webStreamer.write(img) != err::ERR_NONE) {
+        // 暂时不因网页客户端断开而停止识别程序
+    }
+
     disp.show(*img);
 
     delete img;
@@ -597,6 +664,11 @@ int _main(int argc, char *argv[]) {
     cv::putText(rgb, "NEXT MODE",
                 cv::Point(DEBUG_MODE_BUTTON.x + 10, DEBUG_MODE_BUTTON.y + 40),
                 cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
+    
+        // 推送已经绘制好识别框、跟踪状态和调试信息的图像
+    if (webStreamer.write(img) != err::ERR_NONE) {
+        // 网络推流失败不应阻塞自瞄主流程
+    }
 
     disp.show(*img);
     delete img;

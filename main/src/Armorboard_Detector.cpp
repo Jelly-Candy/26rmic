@@ -1,8 +1,8 @@
 #include "Armorboard_Detector.hpp"
 #include <algorithm>
 #include <cmath>
-#include <opencv2/imgproc.hpp>
 #include <iostream>
+#include <opencv2/imgproc.hpp>
 #include <utility>
 #include <vector>
 using namespace cv;
@@ -59,23 +59,33 @@ void ArmorDetector::preprocessMask(Mat &mask) {
 static bool hasEnemyColor(const cv::Mat &frame,
                           const std::vector<cv::Point> &contour,
                           EnemyColor enemyColor) {
-  cv::Rect roi=cv::boundingRect(contour);
+  cv::Rect roi = cv::boundingRect(contour);
   // Include a 2px fringe: an overexposed white core can have colored edges.
-  roi=cv::Rect(roi.x-2,roi.y-2,roi.width+4,roi.height+4)&cv::Rect(0,0,frame.cols,frame.rows);
-  if(roi.empty())return false;
-  cv::Mat inside=cv::Mat::zeros(roi.size(),CV_8UC1);
-  std::vector<cv::Point> shifted;for(const auto &p:contour)shifted.emplace_back(p.x-roi.x,p.y-roi.y);
-  cv::drawContours(inside,std::vector<std::vector<cv::Point>>{shifted},0,cv::Scalar(255),cv::FILLED);
-  cv::dilate(inside,inside,cv::getStructuringElement(cv::MORPH_RECT,cv::Size(5,5)));
-  int colored=0,count=0;
-  for(int y=0;y<roi.height;++y)for(int x=0;x<roi.width;++x){
-    if(!inside.at<uchar>(y,x))continue;
-    const auto p=frame.at<cv::Vec3b>(roi.y+y,roi.x+x);++count;
-    int dominant=enemyColor==EnemyColor::RED?p[0]:p[2];
-    int other=enemyColor==EnemyColor::RED?p[2]:p[0];
-    if(dominant>=100 && dominant-std::max(other,int(p[1]))>=25)++colored;
-  }
-  return colored>=5 && colored>=count*0.06f;
+  roi = cv::Rect(roi.x - 2, roi.y - 2, roi.width + 4, roi.height + 4) &
+        cv::Rect(0, 0, frame.cols, frame.rows);
+  if (roi.empty())
+    return false;
+  cv::Mat inside = cv::Mat::zeros(roi.size(), CV_8UC1);
+  std::vector<cv::Point> shifted;
+  for (const auto &p : contour)
+    shifted.emplace_back(p.x - roi.x, p.y - roi.y);
+  cv::drawContours(inside, std::vector<std::vector<cv::Point>>{shifted}, 0,
+                   cv::Scalar(255), cv::FILLED);
+  cv::dilate(inside, inside,
+             cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+  int colored = 0, count = 0;
+  for (int y = 0; y < roi.height; ++y)
+    for (int x = 0; x < roi.width; ++x) {
+      if (!inside.at<uchar>(y, x))
+        continue;
+      const auto p = frame.at<cv::Vec3b>(roi.y + y, roi.x + x);
+      ++count;
+      int dominant = enemyColor == EnemyColor::RED ? p[0] : p[2];
+      int other = enemyColor == EnemyColor::RED ? p[2] : p[0];
+      if (dominant >= 100 && dominant - std::max(other, int(p[1])) >= 25)
+        ++colored;
+    }
+  return colored >= 5 && colored >= count * 0.06f;
 }
 vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
                                           ArmorDebugInfo *debug) {
@@ -91,10 +101,17 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
   cv::threshold(gray, mask, binaryThreshold_, 255, cv::THRESH_BINARY);
   // Luminance alone suppresses saturated red/blue lamps (blue Y is only 29
   // at full brightness). Recover bright, clearly enemy-colored pixels.
-  cv::Mat colorMask=cv::Mat::zeros(frame.size(),CV_8UC1);
-  for(int y=0;y<frame.rows;++y){const auto *src=frame.ptr<cv::Vec3b>(y);auto *dst=colorMask.ptr<uchar>(y);
-    for(int x=0;x<frame.cols;++x){const auto p=src[x];int dominant=enemyColor_==EnemyColor::RED?p[0]:p[2];int other=enemyColor_==EnemyColor::RED?p[2]:p[0];
-      if(dominant>binaryThreshold_ && dominant-std::max(other,int(p[1]))>=35)dst[x]=255;
+  cv::Mat colorMask = cv::Mat::zeros(frame.size(), CV_8UC1);
+  for (int y = 0; y < frame.rows; ++y) {
+    const auto *src = frame.ptr<cv::Vec3b>(y);
+    auto *dst = colorMask.ptr<uchar>(y);
+    for (int x = 0; x < frame.cols; ++x) {
+      const auto p = src[x];
+      int dominant = enemyColor_ == EnemyColor::RED ? p[0] : p[2];
+      int other = enemyColor_ == EnemyColor::RED ? p[2] : p[0];
+      if (dominant > binaryThreshold_ &&
+          dominant - std::max(other, int(p[1])) >= 35)
+        dst[x] = 255;
     }
   }
   // 先闭运算连接较小的断裂，再开运算去除小噪点
@@ -103,10 +120,10 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 3));
 
   cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, closeKernel);
-  cv::morphologyEx(colorMask,colorMask,cv::MORPH_CLOSE,closeKernel);
+  cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, closeKernel);
 
   if (debug != nullptr) {
-    cv::bitwise_or(mask,colorMask,debug->mask);
+    cv::bitwise_or(mask, colorMask, debug->mask);
     debug->lights.clear();
     debug->pairs.clear();
     debug->pairScores.clear();
@@ -118,8 +135,10 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
   // Separate passes prevent colored halos from joining a white lamp core
   // to the bright window/wall and destroying its thin-bar geometry.
   std::vector<std::vector<cv::Point>> coloredContours;
-  cv::findContours(colorMask,coloredContours,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_SIMPLE);
-  contours.insert(contours.end(),coloredContours.begin(),coloredContours.end());
+  cv::findContours(colorMask, coloredContours, cv::RETR_EXTERNAL,
+                   cv::CHAIN_APPROX_SIMPLE);
+  contours.insert(contours.end(), coloredContours.begin(),
+                  coloredContours.end());
   // DEBUG
   int rejectArea = 0;
   int rejectShape = 0;
@@ -190,24 +209,27 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       ++rejectColor;
       continue;
     }
-    bool sameBar=false;
-    for(const auto &old:lights)if(cv::norm(old.center-rect.center)<std::max(4.0f,0.25f*std::min(old.length,length)) && std::min(old.length,length)/std::max(old.length,length)>0.60f){sameBar=true;break;}
-    if(sameBar)continue;
+    bool sameBar = false;
+    for (const auto &old : lights)
+      if (cv::norm(old.center - rect.center) <
+              std::max(4.0f, 0.25f * std::min(old.length, length)) &&
+          std::min(old.length, length) / std::max(old.length, length) > 0.60f) {
+        sameBar = true;
+        break;
+      }
+    if (sameBar)
+      continue;
     lights.push_back({rect, rect.center, length, width, fittedAngle});
     ++acceptedLights;
   }
 
-  static unsigned logFrame=0;
-  if((logFrame++%30U)==0U)std::cout
-    << "[ArmorDetector] contours=" << contours.size()
-    << " area=" << rejectArea
-    << " shape=" << rejectShape
-    << " fill=" << rejectFill
-    << " rectAngle=" << rejectRectAngle
-    << " fitAngle=" << rejectFitAngle
-    << " color=" << rejectColor
-    << " accepted=" << acceptedLights
-    << std::endl;
+  static unsigned logFrame = 0;
+  if ((logFrame++ % 30U) == 0U)
+    std::cout << "[ArmorDetector] contours=" << contours.size()
+              << " area=" << rejectArea << " shape=" << rejectShape
+              << " fill=" << rejectFill << " rectAngle=" << rejectRectAngle
+              << " fitAngle=" << rejectFitAngle << " color=" << rejectColor
+              << " accepted=" << acceptedLights << std::endl;
 
   if (debug != nullptr) {
     for (const auto &light : lights) {
