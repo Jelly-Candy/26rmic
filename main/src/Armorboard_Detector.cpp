@@ -28,6 +28,22 @@ struct ArmorPairCandidate {
   float gapRatio;
   float angleDiff;
 };
+
+// 从近似竖直的灯条旋转矩形中提取上、下端点。
+// 假定灯条的长轴接近竖直。
+static void getLightEndpoints(const cv::RotatedRect &rect, cv::Point2f &top,
+                              cv::Point2f &bottom) {
+  cv::Point2f p[4];
+  rect.points(p);
+
+  std::sort(p, p + 4, [](const cv::Point2f &a, const cv::Point2f &b) {
+    return a.y < b.y;
+  });
+
+  top = (p[0] + p[1]) * 0.5f;
+  bottom = (p[2] + p[3]) * 0.5f;
+}
+
 ArmorDetector::ArmorDetector(EnemyColor enemyColor) : enemyColor_(enemyColor) {}
 void ArmorDetector::setEnemyColor(EnemyColor color) { enemyColor_ = color; }
 void ArmorDetector::setBinaryThreshold(int threshold) {
@@ -353,9 +369,35 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
     if (debug != nullptr) {
       debug->keptPairs.push_back(candidate.bbox);
     }
-    ArmorTarget target;
+    ArmorTarget target{};
     target.center = candidate.center;
     target.bbox = candidate.bbox;
+
+    // candidate.lightA / lightB 对应本次配对的两根灯条。
+    // 按图像 x 坐标确定左右，再计算各自的上、下端点。
+    const LightBar &lightA = lights[candidate.lightA];
+    const LightBar &lightB = lights[candidate.lightB];
+
+    const LightBar *left = &lightA;
+    const LightBar *right = &lightB;
+
+    if (left->center.x > right->center.x) {
+      std::swap(left, right);
+    }
+
+    cv::Point2f leftTop, leftBottom;
+    cv::Point2f rightTop, rightBottom;
+
+    getLightEndpoints(left->rect, leftTop, leftBottom);
+    getLightEndpoints(right->rect, rightTop, rightBottom);
+
+    // 固定顺序：左上、右上、右下、左下。
+    // 注意：这是由灯条几何估计出的四角，并非真实装甲板边缘角点。
+    target.corners[0] = leftTop;
+    target.corners[1] = rightTop;
+    target.corners[2] = rightBottom;
+    target.corners[3] = leftBottom;
+
     targets.push_back(target);
   }
   return targets;
