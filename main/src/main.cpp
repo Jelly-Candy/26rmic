@@ -66,6 +66,29 @@ static const char *debug_mode_name(DebugMode mode) {
   return "UNKNOWN";
 }
 
+static const char *aimRejectReasonName(AimTrackGate::RejectReason reason) {
+  using R = AimTrackGate::RejectReason;
+  switch (reason) {
+  case R::NONE:
+    return "OK";
+  case R::LOST:
+    return "LOST";
+  case R::NON_FINITE:
+    return "NON_FINITE";
+  case R::OUT_OF_BOUNDS:
+    return "OUT_OF_BOUNDS";
+  case R::INVALID_BBOX:
+    return "INVALID_BBOX";
+  case R::NEED_CONFIRMATION:
+    return "CONFIRM";
+  case R::TARGET_JUMP:
+    return "JUMP";
+  case R::HOLD_EXPIRED:
+    return "HOLD_EXPIRED";
+  }
+  return "UNKNOWN";
+}
+
 // 判断触点是否在按钮内
 static bool in_button(int x, int y, const cv::Rect &button) {
   return button.contains(cv::Point(x, y));
@@ -347,7 +370,7 @@ int _main(int argc, char *argv[]) {
 
     // 将与本地屏幕相同的图像推送到网页
     if (webStreamer.write(img) != err::ERR_NONE) {
-        // 暂时不因网页客户端断开而停止识别程序
+      // 暂时不因网页客户端断开而停止识别程序
     }
 
     disp.show(*img);
@@ -440,27 +463,34 @@ int _main(int argc, char *argv[]) {
       statN = statDetected = statMeasured = statHeld = statAim = 0;
       statMs = frameNow;
     }
+
     if (aimValid) {
-      cv::putText(rgb, aimGate.held() ? "Aim: HOLD <=60ms" : "Aim: MEASURED",
-                  cv::Point(15, 250), cv::FONT_HERSHEY_SIMPLEX, 0.55,
-                  cv::Scalar(255, 255, 0), 1);
-      // Input and output are in the upright, mounted camera frame.
-      // Original calibration remains unchanged; CameraModel handles the roll.
       const cv::Point2f angle = cameraModel.mountedPixelToAngle(aimCenter);
 
-      // 填充瞄准结果
-      aimResult.targetFound = true;
-      aimResult.yawDeg = angle.x;
-      aimResult.pitchDeg = angle.y;
-      aimResult.centerX = aimCenter.x;
-      aimResult.centerY = aimCenter.y;
+      const bool angleValid =
+          std::isfinite(angle.x) && std::isfinite(angle.y) &&
+          std::fabs(angle.x) <= 90.0f && std::fabs(angle.y) <= 90.0f;
 
-      // 在画面上显示与瞄准结果一致的角度
-      cv::putText(rgb, "Yaw:" + std::to_string(angle.x), cv::Point(15, 190),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+      if (angleValid) {
+        aimResult.targetFound = true;
+        aimResult.yawDeg = angle.x;
+        aimResult.pitchDeg = angle.y;
+        aimResult.centerX = aimCenter.x;
+        aimResult.centerY = aimCenter.y;
 
-      cv::putText(rgb, "Pitch:" + std::to_string(angle.y), cv::Point(15, 220),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+        cv::putText(rgb, aimGate.held() ? "Aim: HOLD <=60ms" : "Aim: MEASURED",
+                    cv::Point(15, 250), cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                    cv::Scalar(255, 255, 0), 1);
+
+        cv::putText(rgb, "Yaw:" + std::to_string(angle.x), cv::Point(15, 190),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+
+        cv::putText(rgb, "Pitch:" + std::to_string(angle.y), cv::Point(15, 220),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+      } else {
+        cv::putText(rgb, "Aim: INVALID ANGLE", cv::Point(15, 250),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(255, 0, 0), 1);
+      }
     }
 
     // 读取并打印 IMU 数据
@@ -664,10 +694,10 @@ int _main(int argc, char *argv[]) {
     cv::putText(rgb, "NEXT MODE",
                 cv::Point(DEBUG_MODE_BUTTON.x + 10, DEBUG_MODE_BUTTON.y + 40),
                 cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
-    
-        // 推送已经绘制好识别框、跟踪状态和调试信息的图像
+
+    // 推送已经绘制好识别框、跟踪状态和调试信息的图像
     if (webStreamer.write(img) != err::ERR_NONE) {
-        // 网络推流失败不应阻塞自瞄主流程
+      // 网络推流失败不应阻塞自瞄主流程
     }
 
     disp.show(*img);
