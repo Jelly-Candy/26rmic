@@ -1,3 +1,4 @@
+
 #include "ArmorPoseSolver.hpp"
 
 #include <opencv2/calib3d.hpp>
@@ -5,6 +6,7 @@
 #include <cmath>
 #include <vector>
 
+// 求解小装甲板的 PnP 姿态。
 bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
                         const cv::Mat &cameraMatrix, const cv::Mat &distCoeffs,
                         ArmorPose &pose) {
@@ -17,6 +19,11 @@ bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
     return false;
   }
 
+  if (cameraMatrix.type() != CV_64F ||
+      (distCoeffs.depth() != CV_64F && distCoeffs.depth() != CV_32F)) {
+    return false;
+  }
+
   for (const cv::Point2f &p : imagePoints) {
     if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
       return false;
@@ -24,24 +31,16 @@ bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
   }
 
   // 2. 定义装甲板在自身坐标系下的四个三维角点。
-  //
-  // 这里沿用现有项目中的尺寸：
-  // halfWidth = 0.03125 m
-  // halfBarLength = 0.01425 m
-  //
-  // 对应模型宽度 0.0625 m、高度 0.0285 m。
-  //
-  // 该坐标顺序必须与 imagePoints 的角点顺序严格对应：
+  // 物点顺序必须与 imagePoints 的顺序一致：
   // 左上、右上、右下、左下。
   constexpr double halfWidth = 0.03125;
   constexpr double halfHeight = 0.01425;
 
   const std::vector<cv::Point3f> objectPoints = {
-      cv::Point3f(-halfWidth, -halfHeight, 0.0f), // 左上
-      cv::Point3f(halfWidth, -halfHeight, 0.0f),  // 右上
-      cv::Point3f(halfWidth, halfHeight, 0.0f),   // 右下
-      cv::Point3f(-halfWidth, halfHeight, 0.0f)   // 左下
-  };
+      cv::Point3f(-halfWidth, -halfHeight, 0.0f),
+      cv::Point3f(halfWidth, -halfHeight, 0.0f),
+      cv::Point3f(halfWidth, halfHeight, 0.0f),
+      cv::Point3f(-halfWidth, halfHeight, 0.0f)};
 
   const std::vector<cv::Point2f> points(imagePoints.begin(), imagePoints.end());
 
@@ -57,9 +56,15 @@ bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
     return false;
   }
 
-  // 4. 平移向量必须是有限数值，且目标必须位于相机前方。
-  if (!std::isfinite(tvec[0]) || !std::isfinite(tvec[1]) ||
-      !std::isfinite(tvec[2]) || tvec[2] <= 0.0) {
+  // 4. 旋转向量和平移向量都必须是有限数值。
+  for (int i = 0; i < 3; ++i) {
+    if (!std::isfinite(rvec[i]) || !std::isfinite(tvec[i])) {
+      return false;
+    }
+  }
+
+  // 目标必须位于相机前方。
+  if (tvec[2] <= 0.0) {
     return false;
   }
 
@@ -76,7 +81,13 @@ bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
   double totalError = 0.0;
 
   for (std::size_t i = 0; i < points.size(); ++i) {
-    const double error = cv::norm(points[i] - projectedPoints[i]);
+    const cv::Point2f &p = projectedPoints[i];
+
+    if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
+      return false;
+    }
+
+    const double error = cv::norm(points[i] - p);
 
     if (!std::isfinite(error)) {
       return false;
@@ -87,13 +98,17 @@ bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
 
   const double meanError = totalError / static_cast<double>(points.size());
 
+  const double distance = cv::norm(tvec);
+
+  if (!std::isfinite(meanError) || !std::isfinite(distance) ||
+      distance <= 0.0) {
+    return false;
+  }
+
   // 6. 保存求解结果。
   pose.translation = tvec;
   pose.rotation = rvec;
-
-  // 三维欧氏距离，不只是 Z 方向距离。
-  pose.distance = cv::norm(tvec);
-
+  pose.distance = distance;
   pose.reprojectionError = meanError;
   pose.valid = true;
 

@@ -17,6 +17,8 @@
 #include "CameraModel.hpp"
 #include "ImuReader.hpp"
 #include "UartFrameWriter.hpp"
+#include "RuntimeLogBuffer.hpp"
+#include "RuntimeLogServer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -24,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <opencv2/opencv.hpp>
 #include <string>
@@ -232,49 +235,123 @@ int _main(int argc, char *argv[]) {
   http::JpegStreamer webStreamer("0.0.0.0", 8000, 2);
 
   const std::string monitorHtml = R"HTML(
-  <!DOCTYPE html>
-  <html lang="zh-CN">
-  <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>26rmic 自瞄监控</title>
-  <style>
-  body {
-    margin: 0;
-    padding: 16px;
-    background: #111827;
-    color: #f3f4f6;
-    font-family: sans-serif;
-  }
-  h2 { margin-top: 0; }
-  .panel {
-    max-width: 800px;
-    margin: auto;
-  }
-  img {
-    display: block;
-    width: 100%;
-    border-radius: 10px;
-    background: #000;
-  }
-  .note {
-    color: #9ca3af;
-    font-size: 14px;
-    margin-top: 12px;
-  }
-  </style>
-  </head>
-  <body>
-  <div class="panel">
-    <h2>26rmic 自瞄监控</h2>
-    <img src="/stream" alt="等待视频流">
-    <p class="note">
-      当前显示 MaixCAM 2 推送的图像。
-      请保持手机与设备连接在同一热点网络。
-    </p>
-  </div>
-  </body>
-  </html>
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>26rmic 自瞄监控</title>
+    <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      background: #111827;
+      color: #f3f4f6;
+      font-family: sans-serif;
+    }
+    .panel { max-width: 1000px; margin: auto; }
+    h2 { margin-top: 0; }
+    img {
+      display: block;
+      width: 100%;
+      border-radius: 10px;
+      background: #000;
+    }
+    .note { color: #9ca3af; font-size: 14px; }
+    .log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 18px;
+    }
+    #status { color: #9ca3af; font-size: 13px; }
+    #logs {
+      height: 260px;
+      overflow: auto;
+      padding: 12px;
+      background: #030712;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 12px/1.5 monospace;
+    }
+    .log-error { color: #f87171; }
+    .log-warn { color: #fbbf24; }
+    .log-info { color: #d1d5db; }
+    </style>
+    </head>
+    <body>
+    <div class="panel">
+      <h2>26rmic 自瞄监控</h2>
+      <img src="/stream" alt="等待视频流">
+      <p class="note">
+        请保持手机与 MaixCAM 2 连接在同一热点网络。
+      </p>
+
+      <div class="log-header">
+        <h3>运行日志</h3>
+        <span id="status">正在连接日志服务…</span>
+      </div>
+      <pre id="logs"></pre>
+    </div>
+
+    <script>
+    const logBox = document.getElementById("logs");
+    const statusBox = document.getElementById("status");
+    const logUrl =
+      "http://" + window.location.hostname + ":8001/logs";
+
+    let lastContent = "";
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, c => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[c]));
+    }
+
+    async function refreshLogs() {
+      try {
+        const response = await fetch(logUrl, { cache: "no-store" });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+
+        const data = await response.json();
+        const logs = Array.isArray(data.logs) ? data.logs : [];
+
+        const content = logs.map(item => {
+          const level = String(item.level || "INFO").toUpperCase();
+          const cls = level.includes("ERROR") ? "log-error" :
+                      level.includes("WARN") ? "log-warn" : "log-info";
+          const time = (Number(item.time_ms || 0) / 1000).toFixed(3);
+          return '<span class="' + cls + '">[' + time + 's] [' +
+            escapeHtml(level) + '] ' +
+            escapeHtml(item.message || "") + '</span>';
+        }).join("\n");
+
+        if (content !== lastContent) {
+          const nearBottom =
+            logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 40;
+          logBox.innerHTML = content;
+          lastContent = content;
+          if (nearBottom) logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        statusBox.textContent = "日志服务正常 · " + logs.length + " 条";
+      } catch (error) {
+        statusBox.textContent = "日志连接失败：" + error.message;
+      }
+    }
+
+    refreshLogs();
+    setInterval(refreshLogs, 1000);
+    </script>
+    </body>
+    </html>
   )HTML";
 
   if (webStreamer.set_html(monitorHtml) != err::ERR_NONE) {
@@ -288,6 +365,14 @@ int _main(int argc, char *argv[]) {
   }
 
   log::info("Web video streamer started on port 8000");
+
+  RuntimeLogServer logServer(8001);
+
+  if (!logServer.start()) {
+      log::error("Failed to start runtime log server on port 8001");
+  } else {
+      runtimeLog("INFO", "Runtime log server started on port 8001");
+  }
 
   // 自检通过后再继续初始化。
   ImuReader imuReader;
@@ -437,30 +522,46 @@ int _main(int argc, char *argv[]) {
     ArmorDebugInfo debugInfo;
     std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
 
-    // PnP 仅用于调试，不参与当前瞄准控制。
+    const TrackedTarget &tracked = tracker.update(targets);
+
+    // PnP 仅对与当前跟踪目标匹配的本帧检测结果求解。
+    // 不使用 TEMP_LOST 状态下的预测中心冒充真实测量。
     ArmorPose bestPose;
     bool pnpValid = false;
 
-    for (const ArmorTarget &target : targets) {
-      ArmorPose pose;
+    if (tracked.state == TrackState::TRACKING && !targets.empty()) {
+      int matchedIndex = -1;
+      float bestDistanceSq = std::numeric_limits<float>::max();
 
-      std::array<cv::Point2f, 4> imagePoints;
-      std::copy(std::begin(target.corners), std::end(target.corners),
-                imagePoints.begin());
+      for (size_t i = 0; i < targets.size(); ++i) {
+        const cv::Point2f delta = targets[i].center - tracked.center;
+        const float distanceSq = delta.x * delta.x + delta.y * delta.y;
 
-      if (!solveSmallArmorPnP(imagePoints, pnpCameraMatrix, pnpDistCoeffs,
-                              pose)) {
-        continue;
+        if (distanceSq < bestDistanceSq) {
+          bestDistanceSq = distanceSq;
+          matchedIndex = static_cast<int>(i);
+        }
       }
 
-      // 多个候选目标时，暂时选择重投影误差最小的结果。
-      if (!pnpValid || pose.reprojectionError < bestPose.reprojectionError) {
-        bestPose = pose;
-        pnpValid = true;
+      if (matchedIndex >= 0) {
+        const ArmorTarget &target = targets[matchedIndex];
+
+        // 检测角点按旋转后画面的 LT、RT、RB、LB 排列。
+        // 先映射回未旋转的原始传感器图像坐标，
+        // 再恢复原图中的 LT、RT、RB、LB 对应顺序。
+        const auto toRawPixel = [width, height](const cv::Point2f &p) {
+          return cv::Point2f(static_cast<float>(width - 1) - p.x,
+                             static_cast<float>(height - 1) - p.y);
+        };
+
+        const std::array<cv::Point2f, 4> imagePoints = {
+            toRawPixel(target.corners[2]), toRawPixel(target.corners[3]),
+            toRawPixel(target.corners[0]), toRawPixel(target.corners[1])};
+
+        pnpValid = solveSmallArmorPnP(imagePoints, pnpCameraMatrix,
+                                      pnpDistCoeffs, bestPose);
       }
     }
-
-    const TrackedTarget &tracked = tracker.update(targets);
 
     if (captureDir && captureCount < 150) {
       char name[256];
@@ -505,10 +606,21 @@ int _main(int argc, char *argv[]) {
     const uint32_t frameNow = static_cast<uint32_t>(time::ticks_ms());
     const bool aimValid = aimGate.update(tracked, frameNow, aimCenter);
 
-    if (!aimValid) {
-      std::printf("[AimGate] rejected: %s\n",
-                  aimRejectReasonName(aimGate.reason()));
-    }
+    static uint32_t lastAimRejectLogMs = 0;
+static std::string lastAimRejectReason;
+
+if (!aimValid) {
+  const std::string reason = aimRejectReasonName(aimGate.reason());
+
+  if (reason != lastAimRejectReason ||
+      uint32_t(frameNow - lastAimRejectLogMs) >= 1000U) {
+    runtimeLog("WARN", "[AimGate] rejected: %s", reason.c_str());
+    lastAimRejectReason = reason;
+    lastAimRejectLogMs = frameNow;
+  }
+} else {
+  lastAimRejectReason.clear();
+}
 
     static uint32_t statMs = frameNow;
     static unsigned statN = 0, statDetected = 0, statMeasured = 0, statHeld = 0,
@@ -519,8 +631,9 @@ int _main(int argc, char *argv[]) {
     statHeld += aimValid && aimGate.held();
     statAim += aimValid;
     if (uint32_t(frameNow - statMs) >= 1000U) {
-      log::info("[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",
-                statN, statDetected, statMeasured, statHeld, statAim);
+      runtimeLog("INFO",
+           "[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",
+           statN, statDetected, statMeasured, statHeld, statAim);
       statN = statDetected = statMeasured = statHeld = statAim = 0;
       statMs = frameNow;
     }
@@ -583,13 +696,14 @@ int _main(int argc, char *argv[]) {
         if (imuSample.timestampMs - lastImuLogMs >= 200) {
           lastImuLogMs = imuSample.timestampMs;
 
-          std::printf("[IMU] dt=%.4f s attitude=(%.2f, %.2f, %.2f) "
-                      "gyro=(%.2f, %.2f, %.2f) "
-                      "acc=(%.3f, %.3f, %.3f) g\n",
-                      imuSample.dtSeconds, imuSample.rollDeg,
-                      imuSample.pitchDeg, imuSample.yawDeg, imuSample.gx,
-                      imuSample.gy, imuSample.gz, imuSample.ax, imuSample.ay,
-                      imuSample.az);
+          runtimeLog("INFO",
+           "[IMU] dt=%.4f s attitude=(%.2f, %.2f, %.2f) "
+           "gyro=(%.2f, %.2f, %.2f) "
+           "acc=(%.3f, %.3f, %.3f) g",
+           imuSample.dtSeconds, imuSample.rollDeg,
+           imuSample.pitchDeg, imuSample.yawDeg, imuSample.gx,
+           imuSample.gy, imuSample.gz, imuSample.ax,
+           imuSample.ay, imuSample.az);
         }
       }
     }
