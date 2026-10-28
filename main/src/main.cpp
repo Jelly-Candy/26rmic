@@ -11,6 +11,7 @@
 #include "AimResult.hpp"
 #include "AimTrackGate.hpp"
 #include "AimUart.hpp"
+#include "ArmorPoseSolver.hpp"
 #include "ArmorTracker.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
@@ -18,9 +19,11 @@
 #include "UartFrameWriter.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include <memory>
 #include <opencv2/opencv.hpp>
 #include <string>
@@ -327,6 +330,16 @@ int _main(int argc, char *argv[]) {
     return -1;
   }
 
+  cv::Mat pnpCameraMatrix;
+  cv::Mat pnpDistCoeffs;
+
+  if (!cameraModel.getPnPParameters(pnpCameraMatrix, pnpDistCoeffs)) {
+    log::error("Failed to get PnP camera parameters");
+    return -1;
+  }
+
+  log::info("PnP camera parameters loaded");
+
   log::info("=== RMIC26 ===");
 
   while (!app::need_exit() && !confirmed) {
@@ -420,8 +433,33 @@ int _main(int argc, char *argv[]) {
     cv::rotate(rgb, rgb, cv::ROTATE_180);
 
     // 获取当前帧的检测结果和中间调试数据
+
     ArmorDebugInfo debugInfo;
     std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
+
+    // PnP 仅用于调试，不参与当前瞄准控制。
+    ArmorPose bestPose;
+    bool pnpValid = false;
+
+    for (const ArmorTarget &target : targets) {
+      ArmorPose pose;
+
+      std::array<cv::Point2f, 4> imagePoints;
+      std::copy(std::begin(target.corners), std::end(target.corners),
+                imagePoints.begin());
+
+      if (!solveSmallArmorPnP(imagePoints, pnpCameraMatrix, pnpDistCoeffs,
+                              pose)) {
+        continue;
+      }
+
+      // 多个候选目标时，暂时选择重投影误差最小的结果。
+      if (!pnpValid || pose.reprojectionError < bestPose.reprojectionError) {
+        bestPose = pose;
+        pnpValid = true;
+      }
+    }
+
     const TrackedTarget &tracked = tracker.update(targets);
 
     if (captureDir && captureCount < 150) {
@@ -446,9 +484,32 @@ int _main(int argc, char *argv[]) {
     cv::drawMarker(rgb, cameraModel.mountedPrincipalPoint(),
                    cv::Scalar(0, 255, 0), cv::MARKER_CROSS, 30, 3);
 
+    if (pnpValid) {
+      const std::string distanceText =
+          "PnP Distance: " + std::to_string(bestPose.distance) + " m";
+
+      const std::string errorText =
+          "PnP Reproj: " + std::to_string(bestPose.reprojectionError) + " px";
+
+      cv::putText(rgb, distanceText, cv::Point(15, 280),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(0, 255, 255), 2);
+
+      cv::putText(rgb, errorText, cv::Point(15, 305), cv::FONT_HERSHEY_SIMPLEX,
+                  0.55, cv::Scalar(0, 255, 255), 2);
+    } else {
+      cv::putText(rgb, "PnP: NO VALID POSE", cv::Point(15, 280),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(0, 0, 255), 2);
+    }
+
     cv::Point2f aimCenter;
     const uint32_t frameNow = static_cast<uint32_t>(time::ticks_ms());
     const bool aimValid = aimGate.update(tracked, frameNow, aimCenter);
+
+    if (!aimValid) {
+      std::printf("[AimGate] rejected: %s\n",
+                  aimRejectReasonName(aimGate.reason()));
+    }
+
     static uint32_t statMs = frameNow;
     static unsigned statN = 0, statDetected = 0, statMeasured = 0, statHeld = 0,
                     statAim = 0;
