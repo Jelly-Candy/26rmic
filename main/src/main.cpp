@@ -15,10 +15,11 @@
 #include "ArmorTracker.hpp"
 #include "Armorboard_Detector.hpp"
 #include "CameraModel.hpp"
+#include "FrameTiming.hpp"
 #include "ImuReader.hpp"
-#include "UartFrameWriter.hpp"
 #include "RuntimeLogBuffer.hpp"
 #include "RuntimeLogServer.hpp"
+#include "UartFrameWriter.hpp"
 
 #include <algorithm>
 #include <array>
@@ -369,9 +370,9 @@ int _main(int argc, char *argv[]) {
   RuntimeLogServer logServer(8001);
 
   if (!logServer.start()) {
-      log::error("Failed to start runtime log server on port 8001");
+    log::error("Failed to start runtime log server on port 8001");
   } else {
-      runtimeLog("INFO", "Runtime log server started on port 8001");
+    runtimeLog("INFO", "Runtime log server started on port 8001");
   }
 
   // 自检通过后再继续初始化。
@@ -402,6 +403,7 @@ int _main(int argc, char *argv[]) {
 
   ArmorDetector detector(selectedColor);
   ArmorTracker tracker(80.0f, 5);
+  FrameTiming frameTiming;
   AimTrackGate aimGate;
   CameraModel cameraModel;
 
@@ -509,6 +511,7 @@ int _main(int argc, char *argv[]) {
       continue;
     }
 
+    const FrameTiming::Result timing = frameTiming.tick();
     const int width = img->width();
     const int height = img->height();
 
@@ -522,45 +525,33 @@ int _main(int argc, char *argv[]) {
     ArmorDebugInfo debugInfo;
     std::vector<ArmorTarget> targets = detector.detect(rgb, &debugInfo);
 
-    const TrackedTarget &tracked = tracker.update(targets);
+    const TrackedTarget &tracked =
+        tracker.update(targets, static_cast<float>(timing.dtSeconds));
 
     // PnP 仅对与当前跟踪目标匹配的本帧检测结果求解。
     // 不使用 TEMP_LOST 状态下的预测中心冒充真实测量。
     ArmorPose bestPose;
     bool pnpValid = false;
 
-    if (tracked.state == TrackState::TRACKING && !targets.empty()) {
-      int matchedIndex = -1;
-      float bestDistanceSq = std::numeric_limits<float>::max();
+    if (tracked.state == TrackState::TRACKING && tracked.detectionIndex >= 0 &&
+        tracked.detectionIndex < static_cast<int>(targets.size())) {
 
-      for (size_t i = 0; i < targets.size(); ++i) {
-        const cv::Point2f delta = targets[i].center - tracked.center;
-        const float distanceSq = delta.x * delta.x + delta.y * delta.y;
+      const ArmorTarget &target = targets[tracked.detectionIndex];
 
-        if (distanceSq < bestDistanceSq) {
-          bestDistanceSq = distanceSq;
-          matchedIndex = static_cast<int>(i);
-        }
-      }
+      // 检测角点按旋转后画面的 LT、RT、RB、LB 排列。
+      // 先映射回未旋转的原始传感器图像坐标，
+      // 再恢复原图中的 LT、RT、RB、LB 对应顺序。
+      const auto toRawPixel = [width, height](const cv::Point2f &p) {
+        return cv::Point2f(static_cast<float>(width - 1) - p.x,
+                           static_cast<float>(height - 1) - p.y);
+      };
 
-      if (matchedIndex >= 0) {
-        const ArmorTarget &target = targets[matchedIndex];
+      const std::array<cv::Point2f, 4> imagePoints = {
+          toRawPixel(target.corners[2]), toRawPixel(target.corners[3]),
+          toRawPixel(target.corners[0]), toRawPixel(target.corners[1])};
 
-        // 检测角点按旋转后画面的 LT、RT、RB、LB 排列。
-        // 先映射回未旋转的原始传感器图像坐标，
-        // 再恢复原图中的 LT、RT、RB、LB 对应顺序。
-        const auto toRawPixel = [width, height](const cv::Point2f &p) {
-          return cv::Point2f(static_cast<float>(width - 1) - p.x,
-                             static_cast<float>(height - 1) - p.y);
-        };
-
-        const std::array<cv::Point2f, 4> imagePoints = {
-            toRawPixel(target.corners[2]), toRawPixel(target.corners[3]),
-            toRawPixel(target.corners[0]), toRawPixel(target.corners[1])};
-
-        pnpValid = solveSmallArmorPnP(imagePoints, pnpCameraMatrix,
-                                      pnpDistCoeffs, bestPose);
-      }
+      pnpValid = solveSmallArmorPnP(imagePoints, pnpCameraMatrix, pnpDistCoeffs,
+                                    bestPose);
     }
 
     if (captureDir && captureCount < 150) {
@@ -607,20 +598,20 @@ int _main(int argc, char *argv[]) {
     const bool aimValid = aimGate.update(tracked, frameNow, aimCenter);
 
     static uint32_t lastAimRejectLogMs = 0;
-static std::string lastAimRejectReason;
+    static std::string lastAimRejectReason;
 
-if (!aimValid) {
-  const std::string reason = aimRejectReasonName(aimGate.reason());
+    if (!aimValid) {
+      const std::string reason = aimRejectReasonName(aimGate.reason());
 
-  if (reason != lastAimRejectReason ||
-      uint32_t(frameNow - lastAimRejectLogMs) >= 1000U) {
-    runtimeLog("WARN", "[AimGate] rejected: %s", reason.c_str());
-    lastAimRejectReason = reason;
-    lastAimRejectLogMs = frameNow;
-  }
-} else {
-  lastAimRejectReason.clear();
-}
+      if (reason != lastAimRejectReason ||
+          uint32_t(frameNow - lastAimRejectLogMs) >= 1000U) {
+        runtimeLog("WARN", "[AimGate] rejected: %s", reason.c_str());
+        lastAimRejectReason = reason;
+        lastAimRejectLogMs = frameNow;
+      }
+    } else {
+      lastAimRejectReason.clear();
+    }
 
     static uint32_t statMs = frameNow;
     static unsigned statN = 0, statDetected = 0, statMeasured = 0, statHeld = 0,
@@ -632,8 +623,8 @@ if (!aimValid) {
     statAim += aimValid;
     if (uint32_t(frameNow - statMs) >= 1000U) {
       runtimeLog("INFO",
-           "[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",
-           statN, statDetected, statMeasured, statHeld, statAim);
+                 "[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",
+                 statN, statDetected, statMeasured, statHeld, statAim);
       statN = statDetected = statMeasured = statHeld = statAim = 0;
       statMs = frameNow;
     }
@@ -697,13 +688,12 @@ if (!aimValid) {
           lastImuLogMs = imuSample.timestampMs;
 
           runtimeLog("INFO",
-           "[IMU] dt=%.4f s attitude=(%.2f, %.2f, %.2f) "
-           "gyro=(%.2f, %.2f, %.2f) "
-           "acc=(%.3f, %.3f, %.3f) g",
-           imuSample.dtSeconds, imuSample.rollDeg,
-           imuSample.pitchDeg, imuSample.yawDeg, imuSample.gx,
-           imuSample.gy, imuSample.gz, imuSample.ax,
-           imuSample.ay, imuSample.az);
+                     "[IMU] dt=%.4f s attitude=(%.2f, %.2f, %.2f) "
+                     "gyro=(%.2f, %.2f, %.2f) "
+                     "acc=(%.3f, %.3f, %.3f) g",
+                     imuSample.dtSeconds, imuSample.rollDeg, imuSample.pitchDeg,
+                     imuSample.yawDeg, imuSample.gx, imuSample.gy, imuSample.gz,
+                     imuSample.ax, imuSample.ay, imuSample.az);
         }
       }
     }
