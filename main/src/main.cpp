@@ -798,7 +798,15 @@ int _main(int argc, char *argv[]) {
     else {
       // 绿色框：当前帧检测到的装甲板
       for (const auto &target : targets) {
-        cv::rectangle(rgb, target.bbox, cv::Scalar(0, 255, 0), 2);
+        // 绿色线段：连接四个估计角点，观察灯条端点几何关系。
+        for (int i = 0; i < 4; ++i) {
+          const cv::Point2f &a = target.corners[i];
+          const cv::Point2f &b = target.corners[(i + 1) % 4];
+
+          cv::line(rgb, cv::Point(cvRound(a.x), cvRound(a.y)),
+                   cv::Point(cvRound(b.x), cvRound(b.y)), cv::Scalar(0, 255, 0),
+                   2);
+        }
 
         // 红色点：当前帧检测中心
         cv::circle(rgb,

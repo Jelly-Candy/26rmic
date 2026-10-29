@@ -5,17 +5,32 @@
 #include <opencv2/imgproc.hpp>
 #include <utility>
 #include <vector>
+
 using namespace cv;
 using namespace std;
+
 // 几何评分上限：越低越严格。
 // 3.0 是初始调试值，需根据真实画面调整。
+static constexpr float MIN_LIGHT_LENGTH_RATIO = 0.55f;
+static constexpr float MAX_VERTICAL_DIFF_RATIO = 0.60f;
+
+static constexpr float MIN_GAP_RATIO = 0.50f;
+static constexpr float MAX_GAP_RATIO = 4.50f;
+
+static constexpr float MAX_LIGHT_ANGLE_DIFF = 20.0f;
 static constexpr float MAX_PAIR_SCORE = 3.0f;
+
+static constexpr float DUPLICATE_OVERLAP_RATIO = 0.65f;
+static constexpr float DUPLICATE_IOU_THRESHOLD = 0.45f;
+
 struct LightBar {
   cv::RotatedRect rect;
   cv::Point2f center;
+  cv::Point2f top;
+  cv::Point2f bottom;
   float length;
   float width;
-  float angle; // 长轴相对水平轴的角度
+  float angle; // 拟合主轴相对水平轴的角度
 };
 struct ArmorPairCandidate {
   cv::Rect bbox;
@@ -29,19 +44,81 @@ struct ArmorPairCandidate {
   float angleDiff;
 };
 
-// 从近似竖直的灯条旋转矩形中提取上、下端点。
-// 假定灯条的长轴接近竖直。
-static void getLightEndpoints(const cv::RotatedRect &rect, cv::Point2f &top,
-                              cv::Point2f &bottom) {
-  cv::Point2f p[4];
-  rect.points(p);
+// 如果两根候选灯条围成的区域中还有第三根灯条，
+// 则认为这组配对可能跨越了不同目标。
+static bool containsIntermediateLight(const std::vector<LightBar> &lights,
+                                      size_t indexA, size_t indexB) {
+  if (indexA >= lights.size() || indexB >= lights.size() || indexA == indexB) {
+    return true;
+  }
 
-  std::sort(p, p + 4, [](const cv::Point2f &a, const cv::Point2f &b) {
-    return a.y < b.y;
-  });
+  // 使用两根候选灯条的旋转矩形顶点构造包围区域。
+  cv::Point2f pointsA[4];
+  cv::Point2f pointsB[4];
 
-  top = (p[0] + p[1]) * 0.5f;
-  bottom = (p[2] + p[3]) * 0.5f;
+  lights[indexA].rect.points(pointsA);
+  lights[indexB].rect.points(pointsB);
+
+  std::vector<cv::Point2f> points;
+  points.reserve(8);
+
+  for (const auto &p : pointsA) {
+    points.push_back(p);
+  }
+
+  for (const auto &p : pointsB) {
+    points.push_back(p);
+  }
+
+  const cv::Rect region = cv::boundingRect(points);
+
+  // 检查其他灯条的中心是否落在这两根灯条围成的区域内。
+  for (size_t k = 0; k < lights.size(); ++k) {
+    if (k == indexA || k == indexB) {
+      continue;
+    }
+
+    const cv::Point center(cvRound(lights[k].center.x),
+                           cvRound(lights[k].center.y));
+
+    if (region.contains(center)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// 计算两个矩形框的交并比（IoU）。
+static float calculateIoU(const cv::Rect &a, const cv::Rect &b) {
+
+  const cv::Rect intersection = a & b;
+
+  if (intersection.empty()) {
+    return 0.0f;
+  }
+
+  const float intersectionArea = static_cast<float>(intersection.area());
+
+  const float unionArea =
+      static_cast<float>(a.area() + b.area()) - intersectionArea;
+
+  if (unionArea <= 0.0f) {
+    return 0.0f;
+  }
+
+  return intersectionArea / unionArea;
+}
+
+// 根据左右两根灯条的端点估算装甲板四角。
+// corners 顺序：左上、右上、右下、左下。
+static void calculateArmorCorners(const LightBar &left, const LightBar &right,
+                                  cv::Point2f corners[4]) {
+
+  corners[0] = left.top;
+  corners[1] = right.top;
+  corners[2] = right.bottom;
+  corners[3] = left.bottom;
 }
 
 ArmorDetector::ArmorDetector(EnemyColor enemyColor) : enemyColor_(enemyColor) {}
@@ -164,6 +241,11 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
   int rejectColor = 0;
   int acceptedLights = 0;
   for (const auto &contour : contours) {
+    // 轮廓点过少时，主轴拟合和方向判断不够可靠。
+    if (contour.size() < 5) {
+      continue;
+    }
+
     const double area = cv::contourArea(contour);
     cv::RotatedRect rect = cv::minAreaRect(contour);
     const float w = rect.size.width;
@@ -190,7 +272,11 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
     }
     // 过滤填充率过低的细长外接矩形
 
-    if (rectArea <= 0.0f || area / rectArea < 0.25f) {
+    // 轮廓面积相对于旋转外接矩形面积的比例。
+    // 过低时，候选可能只是细长矩形中的零散亮斑或噪声。
+    constexpr float MIN_LIGHT_FILL_RATIO = 0.35f;
+
+    if (rectArea <= 0.0f || area / rectArea < MIN_LIGHT_FILL_RATIO) {
       ++rejectFill;
       continue;
     }
@@ -220,6 +306,34 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       ++rejectFitAngle;
       continue;
     }
+    // 沿拟合主轴投影所有轮廓点，找到灯条两端。
+    // fitLine 返回的方向向量长度通常为 1。
+    const cv::Point2f direction(line[0], line[1]);
+    const cv::Point2f linePoint(line[2], line[3]);
+
+    float minProjection = 1e30f;
+    float maxProjection = -1e30f;
+
+    for (const cv::Point &p : contour) {
+      const cv::Point2f point(static_cast<float>(p.x), static_cast<float>(p.y));
+
+      const float projection = (point.x - linePoint.x) * direction.x +
+                               (point.y - linePoint.y) * direction.y;
+
+      minProjection = std::min(minProjection, projection);
+      maxProjection = std::max(maxProjection, projection);
+    }
+
+    cv::Point2f endpointA = linePoint + direction * minProjection;
+    cv::Point2f endpointB = linePoint + direction * maxProjection;
+
+    // 统一为图像坐标中的上端点和下端点。
+    cv::Point2f top = endpointA;
+    cv::Point2f bottom = endpointB;
+
+    if (top.y > bottom.y) {
+      std::swap(top, bottom);
+    }
     // 几何筛选通过后，再验证敌方颜色
     if (!hasEnemyColor(frame, contour, enemyColor_)) {
       ++rejectColor;
@@ -233,9 +347,13 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
         sameBar = true;
         break;
       }
-    if (sameBar)
+    if (sameBar) {
       continue;
-    lights.push_back({rect, rect.center, length, width, fittedAngle});
+    }
+
+    lights.push_back(
+        {rect, rect.center, top, bottom, length, width, fittedAngle});
+
     ++acceptedLights;
   }
 
@@ -259,6 +377,10 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
     for (size_t j = i + 1; j < lights.size(); ++j) {
       const auto &a = lights[i];
       const auto &b = lights[j];
+      // 如果两根灯条之间存在第三根灯条，跳过这组配对。
+      if (containsIntermediateLight(lights, i, j)) {
+        continue;
+      }
       // 按图像中的 x 坐标排序
       const LightBar *left = &a;
       const LightBar *right = &b;
@@ -273,18 +395,18 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       }
       // 条件 1：灯条长度比例
       const float heightRatio = minLen / maxLen;
-      if (heightRatio < 0.55f) {
+      if (heightRatio < MIN_HEIGHT_RATIO) {
         continue;
       }
       // 条件 2：中心垂直偏差
       const float verticalDiff = std::abs(left->center.y - right->center.y);
-      if (verticalDiff > avgLen * 0.60f) {
+      if (verticalDiff > avgLen * MAX_VERTICAL_DIFF_RATIO) {
         continue;
       }
       // 条件 3：两根灯条的水平间距
       const float horizontalDist = right->center.x - left->center.x;
       const float gapRatio = horizontalDist / avgLen;
-      if (gapRatio < 0.50f || gapRatio > 4.50f) {
+      if (gapRatio < MIN_GAP_RATIO || gapRatio > MAX_GAP_RATIO) {
         continue;
       }
       // 条件 4：灯条长轴角度差
@@ -292,13 +414,13 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       // 这里必须考虑长轴方向以 180 度为周期。
       float angleDiff = std::abs(left->angle - right->angle);
       angleDiff = std::min(angleDiff, 180.0f - angleDiff);
-      if (angleDiff > 20.0f) {
+      if (angleDiff > MAX_LIGHT_ANGLE_DIFF) {
         continue;
       }
       // 条件 5：几何评分，越低越好
       const float heightPenalty = 1.0f - heightRatio;
       const float verticalPenalty = verticalDiff / avgLen;
-      const float anglePenalty = angleDiff / 20.0f;
+      const float anglePenalty = angleDiff / MAX_LIGHT_ANGLE_DIFF;
       const float gapPenalty = std::abs(gapRatio - 2.0f) / 2.0f;
       const float score = 2.0f * heightPenalty + 2.0f * verticalPenalty +
                           1.0f * anglePenalty + 1.0f * gapPenalty;
@@ -350,11 +472,20 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
     bool duplicated = false;
     for (const auto &kept : keptBoxes) {
       const cv::Rect intersection = candidate.bbox & kept;
+
       const float intersectionArea = static_cast<float>(intersection.area());
+
       const float minArea =
           static_cast<float>(std::min(candidate.bbox.area(), kept.area()));
-      // 相交面积占较小矩形面积的比例
-      if (minArea > 0.0f && intersectionArea / minArea > 0.65f) {
+
+      const float overlapRatio =
+          minArea > 0.0f ? intersectionArea / minArea : 0.0f;
+
+      const float iou = calculateIoU(candidate.bbox, kept);
+
+      // 两个框高度重叠，或者整体重合程度较高，
+      // 就认为后一个候选框可能是重复检测。
+      if (overlapRatio > 0.65f || iou > 0.45f) {
         duplicated = true;
         break;
       }
@@ -370,33 +501,16 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       debug->keptPairs.push_back(candidate.bbox);
     }
     ArmorTarget target{};
-    target.center = candidate.center;
-    target.bbox = candidate.bbox;
-
-    // candidate.lightA / lightB 对应本次配对的两根灯条。
-    // 按图像 x 坐标确定左右，再计算各自的上、下端点。
-    const LightBar &lightA = lights[candidate.lightA];
-    const LightBar &lightB = lights[candidate.lightB];
-
-    const LightBar *left = &lightA;
-    const LightBar *right = &lightB;
-
-    if (left->center.x > right->center.x) {
-      std::swap(left, right);
-    }
-
-    cv::Point2f leftTop, leftBottom;
-    cv::Point2f rightTop, rightBottom;
-
-    getLightEndpoints(left->rect, leftTop, leftBottom);
-    getLightEndpoints(right->rect, rightTop, rightBottom);
-
     // 固定顺序：左上、右上、右下、左下。
-    // 注意：这是由灯条几何估计出的四角，并非真实装甲板边缘角点。
     target.corners[0] = leftTop;
     target.corners[1] = rightTop;
     target.corners[2] = rightBottom;
     target.corners[3] = leftBottom;
+
+    // 根据四个端点的平均位置计算中心。
+    target.center = (target.corners[0] + target.corners[1] + target.corners[2] +
+                     target.corners[3]) *
+                    0.25f;
 
     targets.push_back(target);
   }
