@@ -395,7 +395,7 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       }
       // 条件 1：灯条长度比例
       const float heightRatio = minLen / maxLen;
-      if (heightRatio < MIN_HEIGHT_RATIO) {
+      if (heightRatio < MIN_LIGHT_LENGTH_RATIO) {
         continue;
       }
       // 条件 2：中心垂直偏差
@@ -485,7 +485,7 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
 
       // 两个框高度重叠，或者整体重合程度较高，
       // 就认为后一个候选框可能是重复检测。
-      if (overlapRatio > 0.65f || iou > 0.45f) {
+      if (overlapRatio > DUPLICATE_OVERLAP_RATIO || iou > DUPLICATE_IOU_THRESHOLD) {
         duplicated = true;
         break;
       }
@@ -501,11 +501,21 @@ vector<ArmorTarget> ArmorDetector::detect(const Mat &frame,
       debug->keptPairs.push_back(candidate.bbox);
     }
     ArmorTarget target{};
-    // 固定顺序：左上、右上、右下、左下。
-    target.corners[0] = leftTop;
-    target.corners[1] = rightTop;
-    target.corners[2] = rightBottom;
-    target.corners[3] = leftBottom;
+
+    // 保存候选框，供后续跟踪器使用。
+    target.bbox = candidate.bbox;
+
+    // 根据候选记录中的灯条索引，重新取得对应灯条。
+    const LightBar *left = &lights[candidate.lightA];
+    const LightBar *right = &lights[candidate.lightB];
+
+    // 保证左右顺序与图像坐标一致。
+    if (left->center.x > right->center.x) {
+      std::swap(left, right);
+    }
+
+    // 固定角点顺序：左上、右上、右下、左下。
+    calculateArmorCorners(*left, *right, target.corners);
 
     // 根据四个端点的平均位置计算中心。
     target.center = (target.corners[0] + target.corners[1] + target.corners[2] +

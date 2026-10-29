@@ -116,11 +116,14 @@ public:
                              15.0f * target_.missedFrames);
 
     // 将上一帧的框平移到预测中心
-    cv::Rect predictedBox = target_.bbox;
-    predictedBox.x +=
-        static_cast<int>(std::lround(predictedCenter.x - target_.center.x));
-    predictedBox.y +=
-        static_cast<int>(std::lround(predictedCenter.y - target_.center.y));
+    // 保留上一帧检测框的宽高，以卡尔曼预测中心重新构造预测框。
+    const int boxWidth = target_.bbox.width;
+    const int boxHeight = target_.bbox.height;
+
+    cv::Rect predictedBox(
+        static_cast<int>(std::lround(predictedCenter.x - boxWidth * 0.5f)),
+        static_cast<int>(std::lround(predictedCenter.y - boxHeight * 0.5f)),
+        boxWidth, boxHeight);
 
     int bestIndex = -1;
     float bestScore = std::numeric_limits<float>::max();
@@ -205,16 +208,14 @@ public:
       return target_;
     }
 
-    const cv::Point2f oldCenter = target_.center;
     target_.center = predictedCenter;
     target_.velocity = cv::Point2f(vx, vy);
 
-    // 让预测框跟随预测中心移动，而不是停在旧位置。
-    target_.bbox.x +=
-        static_cast<int>(std::lround(target_.center.x - oldCenter.x));
-
-    target_.bbox.y +=
-        static_cast<int>(std::lround(target_.center.y - oldCenter.y));
+    // 预测框始终以预测中心为中心，保持原有宽高。
+    target_.bbox.x = static_cast<int>(
+        std::lround(target_.center.x - target_.bbox.width * 0.5f));
+    target_.bbox.y = static_cast<int>(
+        std::lround(target_.center.y - target_.bbox.height * 0.5f));
 
     target_.state = TrackState::TEMP_LOST;
 
