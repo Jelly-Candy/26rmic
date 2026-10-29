@@ -39,7 +39,8 @@ public:
     kf_.measurementMatrix.at<float>(0, 0) = 1.0f;
     kf_.measurementMatrix.at<float>(1, 1) = 1.0f;
 
-    cv::setIdentity(kf_.processNoiseCov, cv::Scalar::all(0.05));
+    // 过程噪声将在每次 update() 时根据 dtSeconds 动态更新。
+    kf_.processNoiseCov = cv::Mat::zeros(4, 4, CV_32F);
 
     cv::setIdentity(kf_.measurementNoiseCov, cv::Scalar::all(9.0));
 
@@ -64,6 +65,23 @@ public:
     kf_.transitionMatrix = (cv::Mat_<float>(4, 4) << 1, 0, dtSeconds, 0, 0, 1,
                             0, dtSeconds, 0, 0, 1, 0, 0, 0, 0, 1);
 
+    // 使用匀速模型，并考虑未知加速度带来的不确定性。
+    // 状态顺序：[x, y, vx, vy]。
+    // q 表示加速度噪声的方差，单位约为 pixel^2 / second^3。
+    constexpr float accelerationNoiseVariance = 14400.0f;
+
+    const float dt2 = dtSeconds * dtSeconds;
+    const float dt3 = dt2 * dtSeconds;
+    const float dt4 = dt2 * dt2;
+
+    const float q = accelerationNoiseVariance;
+
+    // 按白噪声加速度模型构造过程噪声协方差矩阵 Q。
+    kf_.processNoiseCov =
+        (cv::Mat_<float>(4, 4) << q * dt4 / 4.0f, 0.0f, q * dt3 / 2.0f, 0.0f,
+         0.0f, q * dt4 / 4.0f, 0.0f, q * dt3 / 2.0f, q * dt3 / 2.0f, 0.0f,
+         q * dt2, 0.0f, 0.0f, q * dt3 / 2.0f, 0.0f, q * dt2);
+
     // 每次 update 默认没有本帧匹配结果。
     target_.detectionIndex = -1;
     // LOST 状态下没有历史目标可预测。
@@ -87,11 +105,15 @@ public:
 
     const float vx = prediction.at<float>(2, 0);
     const float vy = prediction.at<float>(3, 0);
-    const float speed = std::sqrt(vx * vx + vy * vy);
 
-    // 丢失时间越长，允许的匹配范围越大，但设置上限。
-    const float gate = std::min(240.0f, baseMatchDistance_ + 1.5f * speed +
-                                            15.0f * target_.missedFrames);
+    // 速度单位是像素/秒，换算成当前帧预计移动的像素距离。
+    const float speed = std::sqrt(vx * vx + vy * vy);
+    const float predictedDisplacement = speed * dtSeconds;
+
+    // 根据预计位移和连续丢失帧数调整匹配范围。
+    const float gate =
+        std::min(240.0f, baseMatchDistance_ + 1.5f * predictedDisplacement +
+                             15.0f * target_.missedFrames);
 
     // 将上一帧的框平移到预测中心
     cv::Rect predictedBox = target_.bbox;
