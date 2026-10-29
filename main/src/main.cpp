@@ -616,16 +616,33 @@ int _main(int argc, char *argv[]) {
     static uint32_t statMs = frameNow;
     static unsigned statN = 0, statDetected = 0, statMeasured = 0, statHeld = 0,
                     statAim = 0;
+
+    // 统计每个输出周期内的有效帧间隔。
+    static double statDtSumMs = 0.0;
+    static unsigned statDtN = 0;
+
+    if (timing.valid) {
+      statDtSumMs += timing.dtSeconds * 1000.0;
+      ++statDtN;
+    }
+
     ++statN;
     statDetected += !targets.empty();
     statMeasured += tracked.state == TrackState::TRACKING;
     statHeld += aimValid && aimGate.held();
     statAim += aimValid;
     if (uint32_t(frameNow - statMs) >= 1000U) {
+      const double avgDtMs = statDtN > 0 ? statDtSumMs / statDtN : 0.0;
+
       runtimeLog("INFO",
-                 "[TRACK] frames=%u detected=%u measured=%u held=%u aim=%u",
-                 statN, statDetected, statMeasured, statHeld, statAim);
+                 "[TRACK] fps=%.1f avg_dt=%.2fms "
+                 "frames=%u detected=%u measured=%u held=%u aim=%u",
+                 timing.fps, avgDtMs, statN, statDetected, statMeasured,
+                 statHeld, statAim);
+
       statN = statDetected = statMeasured = statHeld = statAim = 0;
+      statDtSumMs = 0.0;
+      statDtN = 0;
       statMs = frameNow;
     }
 
