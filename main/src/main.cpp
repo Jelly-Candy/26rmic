@@ -73,6 +73,25 @@ static const char *debug_mode_name(DebugMode mode) {
   return "UNKNOWN";
 }
 
+// PnP 重投影误差上限，单位：像素。
+// 默认值是初始调试值，后续需要根据实机数据调整。
+static double pnpMaxReprojectionErrorPx() {
+  const char *value = std::getenv("RMIC_PNP_MAX_REPROJ_ERROR");
+
+  if (value == nullptr || *value == '\0') {
+    return 4.0;
+  }
+
+  char *end = nullptr;
+  const double parsed = std::strtod(value, &end);
+
+  if (end == value || *end != '\0' || !std::isfinite(parsed) || parsed <= 0.0) {
+    return 4.0;
+  }
+
+  return parsed;
+}
+
 static const char *aimRejectReasonName(AimTrackGate::RejectReason reason) {
   using R = AimTrackGate::RejectReason;
   switch (reason) {
@@ -531,6 +550,7 @@ int _main(int argc, char *argv[]) {
     // PnP 仅对与当前跟踪目标匹配的本帧检测结果求解。
     // 不使用 TEMP_LOST 状态下的预测中心冒充真实测量。
     ArmorPose bestPose;
+    bool pnpSolved = false;
     bool pnpValid = false;
 
     if (tracked.state == TrackState::TRACKING && tracked.detectionIndex >= 0 &&
@@ -552,6 +572,8 @@ int _main(int argc, char *argv[]) {
 
       pnpValid = solveSmallArmorPnP(imagePoints, pnpCameraMatrix, pnpDistCoeffs,
                                     bestPose);
+      pnpValid = pnpSolved &&
+                 bestPose.reprojectionError <= pnpMaxReprojectionErrorPx();
     }
 
     if (captureDir && captureCount < 150) {
@@ -588,6 +610,13 @@ int _main(int argc, char *argv[]) {
 
       cv::putText(rgb, errorText, cv::Point(15, 305), cv::FONT_HERSHEY_SIMPLEX,
                   0.55, cv::Scalar(0, 255, 255), 2);
+    } else if (pnpSolved) {
+      const std::string errorText =
+          "PnP REPROJ HIGH: " + std::to_string(bestPose.reprojectionError) +
+          " px";
+
+      cv::putText(rgb, errorText, cv::Point(15, 280), cv::FONT_HERSHEY_SIMPLEX,
+                  0.55, cv::Scalar(0, 0, 255), 2);
     } else {
       cv::putText(rgb, "PnP: NO VALID POSE", cv::Point(15, 280),
                   cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(0, 0, 255), 2);

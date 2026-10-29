@@ -2,6 +2,7 @@
 #include "ArmorPoseSolver.hpp"
 
 #include <opencv2/calib3d.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <cmath>
 #include <vector>
@@ -30,6 +31,17 @@ bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
     }
   }
 
+  // 相机内参和畸变参数必须全部为有限数值。
+  if (!cv::checkRange(cameraMatrix) || !cv::checkRange(distCoeffs)) {
+    return false;
+  }
+
+  // 相机焦距必须为正。
+  if (cameraMatrix.at<double>(0, 0) <= 0.0 ||
+      cameraMatrix.at<double>(1, 1) <= 0.0) {
+    return false;
+  }
+
   // 2. 定义装甲板在自身坐标系下的四个三维角点。
   // 物点顺序必须与 imagePoints 的顺序一致：
   // 左上、右上、右下、左下。
@@ -43,14 +55,35 @@ bool solveSmallArmorPnP(const std::array<cv::Point2f, 4> &imagePoints,
       cv::Point3f(-halfWidth, halfHeight, 0.0f)};
 
   const std::vector<cv::Point2f> points(imagePoints.begin(), imagePoints.end());
+  // 四个角点不能重合，也不能形成退化四边形。
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    const cv::Point2f &current = points[i];
+    const cv::Point2f &next = points[(i + 1) % points.size()];
+
+    if (cv::norm(current - next) < 1.0) {
+      return false;
+    }
+  }
+
+  // 装甲板四角应构成凸四边形，面积不能接近零。
+  if (!cv::isContourConvex(points) ||
+      std::fabs(cv::contourArea(points)) < 1.0) {
+    return false;
+  }
 
   // 3. 使用 PnP 求解旋转向量和平移向量。
   cv::Vec3d rvec;
   cv::Vec3d tvec;
 
-  const bool solved =
-      cv::solvePnP(objectPoints, points, cameraMatrix, distCoeffs, rvec, tvec,
-                   false, cv::SOLVEPNP_ITERATIVE);
+  bool solved = false;
+
+  try {
+    solved = cv::solvePnP(objectPoints, points, cameraMatrix, distCoeffs, rvec,
+                          tvec, false, cv::SOLVEPNP_ITERATIVE);
+  } catch (const cv::Exception &e) {
+    std::printf("[PnP] solvePnP failed: %s\n", e.what());
+    return false;
+  }
 
   if (!solved) {
     return false;

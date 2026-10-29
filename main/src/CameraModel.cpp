@@ -51,11 +51,21 @@ bool CameraModel::load(const std::string &filename) {
     return false;
   }
 
-  // 保存原始内参
-  baseFx_ = static_cast<float>(cameraMatrix.at<double>(0, 0));
-  baseFy_ = static_cast<float>(cameraMatrix.at<double>(1, 1));
-  baseCx_ = static_cast<float>(cameraMatrix.at<double>(0, 2));
-  baseCy_ = static_cast<float>(cameraMatrix.at<double>(1, 2));
+  // 转换后的内参必须是有限数值，焦距必须为正。
+  if (!cv::checkRange(cameraMatrix_) || !cv::checkRange(distCoeffs_)) {
+    std::printf("Invalid camera calibration: non-finite values\n");
+    return false;
+  }
+
+  if (cameraMatrix_.at<double>(0, 0) <= 0.0 ||
+      cameraMatrix_.at<double>(1, 1) <= 0.0) {
+    std::printf("Invalid camera calibration: focal length must be positive\n");
+    return false;
+  }
+  baseFx_ = static_cast<float>(cameraMatrix_.at<double>(0, 0));
+  baseFy_ = static_cast<float>(cameraMatrix_.at<double>(1, 1));
+  baseCx_ = static_cast<float>(cameraMatrix_.at<double>(0, 2));
+  baseCy_ = static_cast<float>(cameraMatrix_.at<double>(1, 2));
 
   // 初始有效内参等于原始内参
   fx_ = baseFx_;
