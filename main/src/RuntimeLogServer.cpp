@@ -3,15 +3,20 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <cstdint>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <unistd.h>
 
 namespace {
+
+constexpr std::size_t MAX_HEADER_SIZE = 4096;
+constexpr std::size_t MAX_BODY_SIZE = 32;
 
 std::string jsonEscape(const std::string &s) {
     std::string out;
@@ -87,6 +92,90 @@ std::string buildJson() {
     return body;
 }
 
+std::string makeResponse(
+    int status,
+    const char *reason,
+    const std::string &body) {
+
+    return "HTTP/1.1 " + std::to_string(status) + " " + reason + "\r\n"
+           "Content-Type: application/json; charset=utf-8\r\n"
+           "Cache-Control: no-store\r\n"
+           "Access-Control-Allow-Origin: *\r\n"
+           "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+           "Access-Control-Allow-Headers: Content-Type\r\n"
+           "Connection: close\r\n"
+           "Content-Length: " + std::to_string(body.size()) +
+           "\r\n\r\n" + body;
+}
+
+std::string trim(const std::string &value) {
+    std::size_t begin = 0;
+    std::size_t end = value.size();
+
+    while (begin < end &&
+           std::isspace(static_cast<unsigned char>(value[begin]))) {
+        ++begin;
+    }
+
+    while (end > begin &&
+           std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+
+    return value.substr(begin, end - begin);
+}
+
+bool parseContentLength(
+    const std::string &headers,
+    std::size_t &contentLength) {
+
+    const std::size_t lineEnd = headers.find("\r\n");
+    if (lineEnd == std::string::npos) {
+        return false;
+    }
+
+    std::size_t pos = lineEnd + 2;
+
+    while (pos < headers.size()) {
+        const std::size_t end = headers.find("\r\n", pos);
+        if (end == std::string::npos || end == pos) {
+            break;
+        }
+
+        const std::string line = headers.substr(pos, end - pos);
+        const std::size_t colon = line.find(':');
+
+        if (colon != std::string::npos) {
+            std::string name = line.substr(0, colon);
+
+            std::transform(
+                name.begin(), name.end(), name.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+
+            if (name == "content-length") {
+                const std::string value = trim(line.substr(colon + 1));
+
+                try {
+                    std::size_t parsed = 0;
+                    contentLength = std::stoul(value, &parsed);
+
+                    return parsed == value.size() &&
+                           contentLength <= MAX_BODY_SIZE;
+                } catch (...) {
+                    return false;
+                }
+            }
+        }
+
+        pos = end + 2;
+    }
+
+    contentLength = 0;
+    return true;
+}
+
 } // namespace
 
 RuntimeLogServer::RuntimeLogServer(int port) : port_(port) {}
@@ -106,17 +195,21 @@ bool RuntimeLogServer::start() {
     }
 
     int reuse = 1;
-    ::setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR,
-                 &reuse, sizeof(reuse));
+    ::setsockopt(
+        listenFd_, SOL_SOCKET, SO_REUSEADDR,
+        &reuse, sizeof(reuse));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(static_cast<uint16_t>(port_));
 
-    if (::bind(listenFd_, reinterpret_cast<sockaddr *>(&addr),
-               sizeof(addr)) < 0 ||
+    if (::bind(
+            listenFd_,
+            reinterpret_cast<sockaddr *>(&addr),
+            sizeof(addr)) < 0 ||
         ::listen(listenFd_, 4) < 0) {
+
         ::close(listenFd_);
         listenFd_ = -1;
         return false;
@@ -143,6 +236,17 @@ void RuntimeLogServer::stop() {
     }
 }
 
+bool RuntimeLogServer::consumeEnemyColor(int &color) {
+    const int value = pendingEnemyColor_.exchange(0);
+
+    if (value == 0) {
+        return false;
+    }
+
+    color = value;
+    return true;
+}
+
 void RuntimeLogServer::run() {
     while (running_) {
         sockaddr_in clientAddr{};
@@ -157,41 +261,158 @@ void RuntimeLogServer::run() {
             if (!running_) {
                 break;
             }
+
             if (errno == EINTR) {
                 continue;
             }
+
             continue;
         }
 
-        // 只需要读取请求行；限制读取长度，避免无限等待大请求。
-        char request[1024]{};
-        const ssize_t n = ::recv(client, request, sizeof(request) - 1, 0);
+        // 防止客户端连接后一直不发送数据。
+        timeval timeout{};
+        timeout.tv_sec = 2;
+        timeout.tv_usec = 0;
+        ::setsockopt(
+            client, SOL_SOCKET, SO_RCVTIMEO,
+            &timeout, sizeof(timeout));
 
-        if (n > 0 && std::strncmp(request, "GET /logs ", 10) == 0) {
-            const std::string body = buildJson();
+        std::string request;
+        request.reserve(1024);
 
-            std::string response =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/json; charset=utf-8\r\n"
-                "Cache-Control: no-store\r\n"
-                "Access-Control-Allow-Origin: *\r\n"
-                "Connection: close\r\n"
-                "Content-Length: " + std::to_string(body.size()) +
-                "\r\n\r\n" + body;
+        char buffer[1024];
+        std::size_t headerEnd = std::string::npos;
+        std::size_t contentLength = 0;
+        bool requestValid = true;
 
-            sendAll(client, response);
-        } else {
-            const std::string body = "{\"error\":\"not found\"}";
-            const std::string response =
-                "HTTP/1.1 404 Not Found\r\n"
-                "Content-Type: application/json\r\n"
-                "Connection: close\r\n"
-                "Content-Length: " + std::to_string(body.size()) +
-                "\r\n\r\n" + body;
+        // 先读取完整 HTTP 请求头。
+        while (request.size() < MAX_HEADER_SIZE) {
+            const ssize_t n = ::recv(
+                client, buffer, sizeof(buffer), 0);
 
-            sendAll(client, response);
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                requestValid = false;
+                break;
+            }
+
+            if (n == 0) {
+                requestValid = false;
+                break;
+            }
+
+            request.append(buffer, static_cast<std::size_t>(n));
+
+            headerEnd = request.find("\r\n\r\n");
+            if (headerEnd != std::string::npos) {
+                break;
+            }
         }
 
+        if (headerEnd == std::string::npos) {
+            requestValid = false;
+        }
+
+        std::string requestLine;
+        std::string body;
+
+        if (requestValid) {
+            const std::string headers =
+                request.substr(0, headerEnd);
+
+            const std::size_t lineEnd = headers.find("\r\n");
+            if (lineEnd == std::string::npos) {
+                requestValid = false;
+            } else {
+                requestLine = headers.substr(0, lineEnd);
+            }
+
+            if (requestValid &&
+                !parseContentLength(headers, contentLength)) {
+                requestValid = false;
+            }
+
+            const std::size_t bodyStart = headerEnd + 4;
+
+            if (requestValid) {
+                body = request.substr(bodyStart);
+
+                // 继续接收剩余请求正文。
+                while (body.size() < contentLength) {
+                    const std::size_t remaining =
+                        contentLength - body.size();
+
+                    const ssize_t n = ::recv(
+                        client, buffer,
+                        std::min(remaining, sizeof(buffer)), 0);
+
+                    if (n < 0) {
+                        if (errno == EINTR) {
+                            continue;
+                        }
+                        requestValid = false;
+                        break;
+                    }
+
+                    if (n == 0) {
+                        requestValid = false;
+                        break;
+                    }
+
+                    body.append(buffer, static_cast<std::size_t>(n));
+                }
+
+                if (body.size() > contentLength) {
+                    body.resize(contentLength);
+                }
+            }
+        }
+
+        std::string response;
+
+        if (!requestValid) {
+            response = makeResponse(
+                400, "Bad Request",
+                "{\"ok\":false,\"error\":\"invalid request\"}");
+
+        } else if (requestLine.rfind("OPTIONS ", 0) == 0) {
+            response = makeResponse(204, "No Content", "");
+
+        } else if (requestLine.rfind("GET /logs ", 0) == 0) {
+            response = makeResponse(200, "OK", buildJson());
+
+        } else if (requestLine.rfind("POST /api/config ", 0) == 0) {
+            const std::string color = trim(body);
+
+            if (color == "RED") {
+                pendingEnemyColor_.store(1);
+
+                response = makeResponse(
+                    200, "OK",
+                    "{\"ok\":true,\"enemy_color\":\"RED\"}");
+
+            } else if (color == "BLUE") {
+                pendingEnemyColor_.store(2);
+
+                response = makeResponse(
+                    200, "OK",
+                    "{\"ok\":true,\"enemy_color\":\"BLUE\"}");
+
+            } else {
+                response = makeResponse(
+                    400, "Bad Request",
+                    "{\"ok\":false,\"error\":\"color must be RED or BLUE\"}");
+            }
+
+        } else {
+            response = makeResponse(
+                404, "Not Found",
+                "{\"ok\":false,\"error\":\"not found\"}");
+        }
+
+        sendAll(client, response);
         ::close(client);
     }
 }

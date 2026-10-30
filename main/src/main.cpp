@@ -300,6 +300,53 @@ int _main(int argc, char *argv[]) {
     .log-error { color: #f87171; }
     .log-warn { color: #fbbf24; }
     .log-info { color: #d1d5db; }
+    .color-panel {
+    margin-top: 18px;
+    padding: 16px;
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 10px;
+  }
+  .color-options {
+    display: flex;
+    gap: 12px;
+    margin: 12px 0;
+  }
+  .color-btn {
+    flex: 1;
+    padding: 14px;
+    border: 2px solid #4b5563;
+    border-radius: 8px;
+    background: #374151;
+    color: white;
+    font-size: 17px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  .color-btn.selected {
+    border-color: #22c55e;
+    background: #14532d;
+  }
+  #startBtn {
+    width: 100%;
+    padding: 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #2563eb;
+    color: white;
+    font-size: 17px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #startBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  #colorStatus {
+    margin-top: 10px;
+    color: #9ca3af;
+    font-size: 14px;
+  }
     </style>
     </head>
     <body>
@@ -309,6 +356,29 @@ int _main(int argc, char *argv[]) {
       <p class="note">
         请保持手机与 MaixCAM 2 连接在同一热点网络。
       </p>
+
+      <div class="color-panel">
+      <h3>启动配置</h3>
+      <p class="note">请选择需要识别的敌方装甲板颜色。</p>
+
+      <div class="color-options">
+        <button id="blueBtn" class="color-btn selected"
+                onclick="selectColor('BLUE')">
+          BLUE 蓝方
+        </button>
+
+        <button id="redBtn" class="color-btn"
+                onclick="selectColor('RED')">
+          RED 红方
+        </button>
+      </div>
+
+      <button id="startBtn" onclick="startDetection()">
+        确认阵营并开始识别
+      </button>
+
+      <div id="colorStatus">当前选择：BLUE</div>
+    </div>
 
       <div class="log-header">
         <h3>运行日志</h3>
@@ -323,7 +393,75 @@ int _main(int argc, char *argv[]) {
     const logUrl =
       "http://" + window.location.hostname + ":8001/logs";
 
-    let lastContent = "";
+    const configUrl =
+      "http://" + window.location.hostname + ":8001/api/config";
+
+    let selectedColor = "BLUE";
+    let configSending = false;
+    let configSubmitted = false;
+
+    function selectColor(color) {
+      if (configSending || configSubmitted) return;
+
+      selectedColor = color;
+
+      document.getElementById("blueBtn").classList.toggle(
+        "selected", color === "BLUE"
+      );
+
+      document.getElementById("redBtn").classList.toggle(
+        "selected", color === "RED"
+      );
+
+      document.getElementById("colorStatus").textContent =
+        "当前选择：" + color;
+    }
+
+    async function startDetection() {
+      if (configSending || configSubmitted) return;
+
+      configSending = true;
+
+      const startBtn = document.getElementById("startBtn");
+      const status = document.getElementById("colorStatus");
+
+      startBtn.disabled = true;
+      startBtn.textContent = "正在发送配置…";
+
+      try {
+        const response = await fetch(configUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain"
+          },
+          body: selectedColor,
+          cache: "no-store"
+        });
+
+        const result = await response.json();
+
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || ("HTTP " + response.status));
+        }
+
+        configSubmitted = true;
+        status.textContent =
+          "已发送 " + selectedColor + " 配置，等待设备开始识别…";
+
+        startBtn.textContent = "配置已提交";
+        document.getElementById("blueBtn").disabled = true;
+        document.getElementById("redBtn").disabled = true;
+
+      } catch (error) {
+        status.textContent = "配置发送失败：" + error.message;
+        startBtn.disabled = false;
+        startBtn.textContent = "重试";
+
+      } finally {
+        configSending = false;
+      }
+    }
+        let lastContent = "";
 
     function escapeHtml(value) {
       return String(value).replace(/[&<>"']/g, c => ({
@@ -449,6 +587,21 @@ int _main(int argc, char *argv[]) {
   log::info("=== RMIC26 ===");
 
   while (!app::need_exit() && !confirmed) {
+    int webColor = 0;
+
+    if (logServer.consumeEnemyColor(webColor)) {
+        selectedColor = webColor == 1
+            ? EnemyColor::RED
+            : EnemyColor::BLUE;
+
+        confirmed = true;
+
+        log::info("Enemy color received from web: %s",
+                  selectedColor == EnemyColor::RED ? "RED" : "BLUE");
+
+        break;
+    }
+
     image::Image *img = cam.read();
 
     if (img == nullptr) {
@@ -570,7 +723,7 @@ int _main(int argc, char *argv[]) {
           toRawPixel(target.corners[2]), toRawPixel(target.corners[3]),
           toRawPixel(target.corners[0]), toRawPixel(target.corners[1])};
 
-      pnpValid = solveSmallArmorPnP(imagePoints, pnpCameraMatrix, pnpDistCoeffs,
+      pnpSolved = solveSmallArmorPnP(imagePoints, pnpCameraMatrix, pnpDistCoeffs,
                                     bestPose);
       pnpValid = pnpSolved &&
                  bestPose.reprojectionError <= pnpMaxReprojectionErrorPx();
