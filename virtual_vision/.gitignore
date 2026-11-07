@@ -1,0 +1,7 @@
+/build/
+/logs/
+/live.pid
+/core
+/core.*
+!tests/
+!tests/**

@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec sh /root/MaixCAM2_virtual_vision_20261107/start.sh "$@"

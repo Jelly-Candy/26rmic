@@ -1,0 +1,2 @@
+MaixCAM2 blue-spill tolerant black-interior source
+2026-11-07 confirmed parameters
