@@ -1,0 +1,2 @@
+Source: https://github.com/sipeed/MaixCDK
+See original copyright notices in headers. Snapshot commit recorded in verification/sdk_source.txt.
